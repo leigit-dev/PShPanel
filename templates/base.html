@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{ title }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar glass">
+    <div class="brand">
+      <span class="brand-icon">▣</span>
+      <span class="brand-name">{{ title }}</span>
+    </div>
+    <nav class="nav">
+      <a href="#" data-page="home" class="nav-item active">任务</a>
+      <a href="#" data-page="files" class="nav-item">文件</a>
+      <a href="#" data-page="terminal" class="nav-item">终端</a>
+      <a href="#" data-page="performance" class="nav-item">性能</a>
+      <a href="#" data-page="settings" class="nav-item">设置</a>
+    </nav>
+    <button class="logout-btn" onclick="logout()">退出</button>
+  </header>
+  <main id="page-content" class="content"></main>
+</div>
+
+<script src="{{ url_for('static', filename='js/common.js') }}"></script>
+<script>
+const socket = io({transports: ['websocket', 'polling']});
+window.__socket = socket;
+window.initGlobalSocketHandlers(socket);
+
+window.__settings = null;
+window.__pendingTaskFullscreen = null;
+
+// 页面清理钩子
+window.__currentCleanup = null;
+window.__registerCleanup = function(fn) {
+  window.__currentCleanup = fn;
+};
+
+async function loadSettings() {
+  const r = await fetch('/api/settings');
+  window.__settings = await r.json();
+  return window.__settings;
+}
+
+async function logout() {
+  await fetch('/logout', {method: 'POST'});
+  location.href = '/login';
+}
+
+async function navigate(page) {
+  // 触发上一页的清理
+  if (window.__currentCleanup) {
+    try { window.__currentCleanup(); } catch(e) { console.error(e); }
+    window.__currentCleanup = null;
+  }
+
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+
+  const r = await fetch(`/page/${page}`);
+  const html = await r.text();
+  const container = document.getElementById('page-content');
+  container.innerHTML = html;
+
+  // 移除上一个页面的脚本
+  document.querySelectorAll('script[data-page-script]').forEach(el => el.remove());
+
+  const s = document.createElement('script');
+  s.src = `/static/js/${page}.js?t=${Date.now()}`;
+  s.dataset.pageScript = '1';
+  s.onload = () => {
+    window.dispatchEvent(new CustomEvent('page:loaded', {detail: {page}}));
+  };
+  document.body.appendChild(s);
+}
+
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', e => {
+    e.preventDefault();
+    navigate(el.dataset.page);
+  });
+});
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadSettings();
+  navigate('home');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<div class="page-files">
+  <aside class="glass panel roots-panel">
+    <div class="panel-header"><h2>位置</h2></div>
+    <div id="roots-list" class="roots-list"></div>
+  </aside>
+  <section class="glass panel files-panel">
+    <div class="toolbar">
+      <button id="btn-up" class="icon-btn" title="上级">↑</button>
+      <button id="btn-refresh" class="icon-btn" title="刷新">⟳</button>
+      <input id="path-input" type="text" placeholder="/">
+      <button id="btn-mkdir" class="icon-btn" title="新建文件夹">＋📁</button>
+      <button id="btn-newfile" class="icon-btn" title="新建文件">＋📄</button>
+      <label class="icon-btn upload-btn" title="上传文件">⬆
+        <input type="file" id="file-input" multiple hidden>
+      </label>
+    </div>
+    <div id="files-list" class="files-list"></div>
+  </section>
+</div>
+<div class="modal" id="editor-modal" hidden>
+  <div class="glass modal-content">
+    <div class="modal-header">
+      <h3 id="editor-title">编辑</h3>
+      <button class="icon-btn" id="editor-close">✕</button>
+    </div>
+    <textarea id="editor-content"></textarea>
+    <div class="modal-footer">
+      <button class="btn-primary" id="editor-save">保存</button>
+    </div>
+  </div>
+</div>

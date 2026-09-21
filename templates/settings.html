@@ -1,0 +1,35 @@
+<div class="page-settings">
+  <div class="glass panel settings-panel">
+    <div class="panel-header"><h2>面板设置</h2></div>
+    <div class="form-row">
+      <label>面板标题</label>
+      <input type="text" id="set-title">
+    </div>
+    <div class="form-row">
+      <label>终端保留行数</label>
+      <input type="number" id="set-scrollback" min="500" max="100000">
+    </div>
+    <div class="form-row">
+      <label>终端字号</label>
+      <input type="number" id="set-font" min="10" max="24">
+    </div>
+    <div class="form-row">
+      <label>历史保留次数</label>
+      <input type="number" id="set-history" min="1" max="100">
+    </div>
+    <div class="form-row">
+      <label>性能刷新间隔 (ms)</label>
+      <input type="number" id="set-perf" min="500" max="10000" step="500">
+    </div>
+    <button class="btn-primary" id="btn-save-settings">保存</button>
+  </div>
+
+  <div class="glass panel settings-panel">
+    <div class="panel-header"><h2>修改密码</h2></div>
+    <div class="form-row"><label>旧密码</label><input type="password" id="pwd-old"></div>
+    <div class="form-row"><label>新密码</label><input type="password" id="pwd-new"></div>
+    <div class="form-row"><label>确认新密码</label><input type="password" id="pwd-new2"></div>
+    <button class="btn-primary" id="btn-save-pwd">修改密码</button>
+    <div class="form-msg" id="pwd-msg"></div>
+  </div>
+</div>

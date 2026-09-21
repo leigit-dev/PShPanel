@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{ title }} · 登录</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-body">
+  <div class="glass login-card">
+    <div class="logo">▣</div>
+    <h1>{{ title }}</h1>
+    <p class="subtitle" id="subtitle">
+      {% if is_first %}首次使用，请设置管理密码{% else %}请输入密码以继续{% endif %}
+    </p>
+    <input type="password" id="password" placeholder="密码" autofocus>
+    {% if is_first %}
+    <input type="password" id="password2" placeholder="确认密码">
+    {% endif %}
+    <button id="submitBtn">{% if is_first %}创建{% else %}进入{% endif %}</button>
+    <div class="error" id="error"></div>
+  </div>
+<script>
+const isFirst = {{ 'true' if is_first else 'false' }};
+async function submit() {
+  const pwd = document.getElementById('password').value;
+  const err = document.getElementById('error');
+  err.textContent = '';
+  if (isFirst) {
+    const p2 = document.getElementById('password2').value;
+    if (pwd !== p2) { err.textContent = '两次输入不一致'; return; }
+  }
+  if (pwd.length < 4) { err.textContent = '密码至少 4 位'; return; }
+  const r = await fetch('/login', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password: pwd})
+  });
+  const data = await r.json();
+  if (data.ok) location.href = '/';
+  else err.textContent = data.error || '失败';
+}
+document.getElementById('submitBtn').onclick = submit;
+document.getElementById('password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    if (isFirst) document.getElementById('password2').focus();
+    else submit();
+  }
+});
+const p2 = document.getElementById('password2');
+if (p2) p2.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+</script>
+</body>
+</html>

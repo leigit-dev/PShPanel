@@ -1,0 +1,89 @@
+<div class="page-home">
+  <aside class="glass panel task-list-panel">
+    <div class="panel-header">
+      <h2>任务列表</h2>
+      <button class="btn-primary" id="btn-new-task">+ 新建</button>
+    </div>
+    <div id="task-list" class="task-list"></div>
+  </aside>
+  <section class="glass panel task-detail-panel" id="task-detail">
+    <div class="empty-hint">选择一个任务查看详情</div>
+  </section>
+</div>
+
+<!-- ========== 任务配置弹窗 ========== -->
+<div class="modal" id="task-modal" hidden>
+  <div class="glass modal-content task-modal-content">
+    <div class="modal-header">
+      <h3 id="task-modal-title">新建任务</h3>
+      <button class="icon-btn" id="task-modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>任务名称</label>
+        <input type="text" id="tm-name" placeholder="例如：web server" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>启动命令</label>
+        <input type="text" id="tm-command" placeholder="python -u main.py" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>工作目录</label>
+        <div class="input-with-btn">
+          <input type="text" id="tm-cwd" placeholder="留空则用面板所在目录" autocomplete="off">
+          <button class="icon-btn" id="tm-browse" type="button">浏览…</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>模式</label>
+        <select id="tm-mode">
+          <option value="pipe">PIPE — 只读（推荐跑服务器）</option>
+          <option value="pty">PTY — 可交互（推荐跑 shell）</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>开机自启</label>
+        <input type="checkbox" id="tm-enabled">
+      </div>
+      <div class="form-msg" id="tm-msg"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="icon-btn" id="task-modal-cancel">取消</button>
+      <button class="btn-primary" id="task-modal-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 目录选择弹窗 ========== -->
+<div class="modal" id="dir-modal" hidden>
+  <div class="glass modal-content dir-modal-content">
+    <div class="modal-header">
+      <h3>选择目录</h3>
+      <button class="icon-btn" id="dir-modal-close">✕</button>
+    </div>
+    <div class="dir-path-bar">
+      <button class="icon-btn" id="dir-up" title="上级目录" type="button">↑</button>
+      <input type="text" id="dir-path-input" autocomplete="off">
+      <button class="icon-btn" id="dir-go" type="button">转到</button>
+    </div>
+    <div class="dir-list" id="dir-list"></div>
+    <div class="modal-footer">
+      <button class="icon-btn" id="dir-cancel">取消</button>
+      <button class="btn-primary" id="dir-choose">选择此目录</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 历史记录弹窗 ========== -->
+<div class="modal" id="history-modal" hidden>
+  <div class="glass modal-content history-modal-content">
+    <div class="modal-header">
+      <h3>运行历史</h3>
+      <button class="icon-btn" id="history-modal-close">✕</button>
+    </div>
+    <div class="history-list" id="history-list"></div>
+    <div class="modal-footer">
+      <button class="icon-btn" id="history-modal-ok">关闭</button>
+    </div>
+  </div>
+</div>

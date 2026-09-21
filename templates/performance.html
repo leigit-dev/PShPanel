@@ -1,0 +1,34 @@
+<div class="page-perf">
+  <div class="perf-cards">
+    <div class="glass perf-card">
+      <div class="perf-label">CPU</div>
+      <div class="perf-value"><span id="perf-cpu">-</span><span class="unit">%</span></div>
+      <div class="perf-sub" id="perf-cpu-info">-</div>
+      <canvas id="cpu-chart" height="60"></canvas>
+    </div>
+    <div class="glass perf-card">
+      <div class="perf-label">内存</div>
+      <div class="perf-value"><span id="perf-mem">-</span><span class="unit">%</span></div>
+      <div class="perf-sub" id="perf-mem-info">-</div>
+      <canvas id="mem-chart" height="60"></canvas>
+    </div>
+    <div class="glass perf-card">
+      <div class="perf-label">网络 ↓ / ↑</div>
+      <div class="perf-value" id="perf-net-rate">-</div>
+      <div class="perf-sub" id="perf-net-total">-</div>
+      <canvas id="net-chart" height="60"></canvas>
+    </div>
+    <div class="glass perf-card">
+      <div class="perf-label">磁盘</div>
+      <div class="perf-value"><span id="perf-disk">-</span><span class="unit">%</span></div>
+      <div class="perf-sub" id="perf-disk-info">-</div>
+    </div>
+  </div>
+  <div class="glass panel">
+    <div class="panel-header"><h2>任务资源</h2></div>
+    <table class="task-perf-table">
+      <thead><tr><th>任务</th><th>状态</th><th>PID</th><th>CPU</th><th>内存</th></tr></thead>
+      <tbody id="task-perf-body"></tbody>
+    </table>
+  </div>
+</div>
