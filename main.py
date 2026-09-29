@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""PSh Panel - 跨平台服务器控制面板"""
+"""PSh Panel - 跨平台服务器控制面板（优雅退出增强版）"""
 import os, sys, json, uuid, time, hmac, hashlib, secrets, threading
 import subprocess, shutil, signal, string, socket as _socket
 from collections import deque
@@ -64,6 +64,21 @@ def pty_resize(proc, rows, cols):
         fcntl.ioctl(proc['fd'], termios.TIOCSWINSZ, winsize)
 
 
+def pty_is_alive(proc):
+    if IS_WINDOWS:
+        try:
+            return proc.isalive()
+        except Exception:
+            return False
+    try:
+        pid, _ = os.waitpid(proc['pid'], os.WNOHANG)
+        return pid == 0
+    except ChildProcessError:
+        return False
+    except Exception:
+        return True
+
+
 def default_shell():
     return 'cmd.exe' if IS_WINDOWS else '/bin/bash'
 
@@ -80,7 +95,6 @@ def find_free_port(start=5000):
 
 
 def _safe_int(v, default, lo, hi):
-    """把前端传来的任意值安全转成 [lo, hi] 内的 int。"""
     try:
         n = int(v)
     except (TypeError, ValueError):
@@ -116,6 +130,7 @@ class Store:
                 "max_history": 10,
                 "panel_title": "PSh Panel",
                 "perf_interval": 2000,
+                "stop_timeout": 5,
             },
             "tasks": {},
             "history": {},
@@ -128,6 +143,10 @@ class Store:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             tmp.replace(self.path)
 
+    def get_setting(self, key, default=None):
+        with self._lock:
+            return self._data['settings'].get(key, default)
+
     @property
     def data(self): return self._data
 
@@ -136,6 +155,10 @@ class Store:
 
 
 store = Store(STORE_FILE)
+# 保证旧数据文件也有新字段
+with store.lock:
+    for k, v in Store(STORE_FILE)._defaults()['settings'].items():
+        store.data['settings'].setdefault(k, v)
 
 
 # ============================================================
@@ -205,6 +228,7 @@ class TaskManager:
         self.runtimes = {}
         self.lock = threading.RLock()
 
+    # ---------- CRUD ----------
     def list_tasks(self):
         with self.store.lock:
             tasks = self.store.data.get("tasks", {})
@@ -268,6 +292,7 @@ class TaskManager:
             self.store.data.get("history", {}).pop(task_id, None)
             self.store.save()
 
+    # ---------- 启动 ----------
     def start(self, task_id):
         task = self.get_task(task_id)
         if not task:
@@ -278,7 +303,7 @@ class TaskManager:
                 return {"error": "already running"}
             rt = TaskRuntime(task_id)
             rt.mode = task["mode"]
-            rt.buffer = deque(maxlen=self.store.data["settings"]["scrollback"])
+            rt.buffer = deque(maxlen=self.store.get_setting('scrollback', 5000))
             self.runtimes[task_id] = rt
             try:
                 self._spawn(rt, task)
@@ -342,28 +367,35 @@ class TaskManager:
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
             cwd=cwd,
             env=env,
             bufsize=0,
         )
-        if IS_POSIX:
+        if IS_WINDOWS:
+            # 独立进程组：既能被 Ctrl+Break 中断，又不影响主进程
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
             kwargs["preexec_fn"] = os.setsid
         proc = subprocess.Popen(cmd, **kwargs)
         rt.process = proc
         rt.reader = threading.Thread(
             target=self._read_pipe, args=(rt,), daemon=True)
 
-    def stop(self, task_id, timeout=5):
+    # ---------- 停止（两段式：温和 → 等待 → 强制） ----------
+    def stop(self, task_id, timeout=None, force=False):
         with self.lock:
             rt = self.runtimes.get(task_id)
             if not rt or rt.status != 'running':
                 return {"ok": True}
             rt.stopping = True
+            if timeout is None:
+                timeout = float(self.store.get_setting('stop_timeout', 5))
             try:
                 if rt.mode == 'pty':
-                    self._kill_pty(rt)
+                    self._kill_pty(rt, timeout, force)
                 else:
-                    self._kill_pipe(rt)
+                    self._kill_pipe(rt, timeout, force)
             finally:
                 rt.status = 'exited'
                 self.socketio.emit('task:status', {
@@ -372,23 +404,68 @@ class TaskManager:
                 })
             return {"ok": True}
 
-    def _kill_pty(self, rt):
-        if IS_WINDOWS:
-            try: rt.process.write('\x03')
-            except Exception: pass
-            time.sleep(0.3)
-            try: rt.process.close()
-            except Exception: pass
-        else:
-            try: os.kill(rt.process["pid"], signal.SIGTERM)
-            except Exception: pass
-            time.sleep(0.3)
-            try: os.kill(rt.process["pid"], signal.SIGKILL)
-            except Exception: pass
-
-    def _kill_pipe(self, rt):
+    def _kill_pty(self, rt, timeout, force):
         proc = rt.process
         if IS_WINDOWS:
+            if not force:
+                # 1) Ctrl+C
+                try: proc.write('\x03')
+                except Exception: pass
+                # 2) 等待进程自行退出
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    try:
+                        if not proc.isalive():
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.1)
+            # 3) 强制关闭 PTY（pywinpty 没有 kill，close 就是最强操作）
+            try:
+                getattr(proc, 'kill', proc.close)()
+            except Exception:
+                try: proc.close()
+                except Exception: pass
+        else:
+            pid = proc["pid"]
+            if not force:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except Exception:
+                    try: os.kill(pid, signal.SIGTERM)
+                    except Exception: pass
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    try:
+                        wpid, _ = os.waitpid(pid, os.WNOHANG)
+                        if wpid == pid:
+                            return
+                    except ChildProcessError:
+                        return
+                    time.sleep(0.1)
+            # 超时强杀整个进程组
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:
+                try: os.kill(pid, signal.SIGKILL)
+                except Exception: pass
+
+    def _kill_pipe(self, rt, timeout, force):
+        proc = rt.process
+        if IS_WINDOWS:
+            if not force:
+                # 1) Ctrl+Break（需要 CREATE_NEW_PROCESS_GROUP）
+                try:
+                    proc.send_signal(signal.CTRL_BREAK_EVENT)
+                except Exception:
+                    pass
+                # 2) 等待
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    if proc.poll() is not None:
+                        return
+                    time.sleep(0.1)
+            # 3) 强制 taskkill 整棵进程树
             try:
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
@@ -399,25 +476,29 @@ class TaskManager:
                 try: proc.kill()
                 except Exception: pass
         else:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except Exception:
-                try: proc.terminate()
-                except Exception: pass
-            try:
-                proc.wait(timeout=3)
-            except Exception:
+            if not force:
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 except Exception:
-                    try: proc.kill()
+                    try: proc.terminate()
                     except Exception: pass
+                try:
+                    proc.wait(timeout=timeout)
+                    return
+                except Exception:
+                    pass
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                try: proc.kill()
+                except Exception: pass
 
     def restart(self, task_id):
         self.stop(task_id)
         time.sleep(0.5)
         return self.start(task_id)
 
+    # ---------- 输出 ----------
     def _emit_output(self, task_id, text):
         rt = self.runtimes.get(task_id)
         if not rt:
@@ -430,6 +511,7 @@ class TaskManager:
             'task_id': task_id, 'seq': seq, 'data': text,
         }, room=f"task:{task_id}")
 
+    # ---------- 读取线程 ----------
     def _read_pty_win(self, rt):
         proc = rt.process
         try:
@@ -519,7 +601,7 @@ class TaskManager:
                 with self.store.lock:
                     hist = self.store.data.setdefault("history", {}) \
                         .setdefault(rt.task_id, [])
-                    max_h = self.store.data["settings"]["max_history"]
+                    max_h = self.store.get_setting('max_history', 10)
                     tail = [(s, d) for s, d in rt.buffer][-500:]
                     hist.append({
                         "started_at": rt.started_at,
@@ -557,6 +639,8 @@ class TaskManager:
 
 
 task_manager = TaskManager(store, socketio)
+
+
 # ============================================================
 # 性能广播（WS 推送）
 # ============================================================
@@ -594,13 +678,12 @@ class PerfBroadcaster:
     def _loop(self):
         while not self._stop.is_set():
             try:
-                interval = float(self.store.data['settings'].get('perf_interval', 2000)) / 1000.0
+                interval = float(self.store.get_setting('perf_interval', 2000)) / 1000.0
             except Exception:
                 interval = 2.0
             interval = max(0.5, min(interval, 30.0))
 
             if self._is_empty():
-                # 无订阅者：低频空转，避免浪费
                 self._stop.wait(1.0)
                 continue
 
@@ -611,8 +694,6 @@ class PerfBroadcaster:
                 print(f"[perf] {e}")
             self._stop.wait(interval)
 
-
-perf_broadcaster = PerfBroadcaster(socketio, store)
 
 # ============================================================
 # 临时终端会话
@@ -738,16 +819,50 @@ class TerminalSession:
         except Exception: pass
 
     def close(self):
+        """两段式关闭：Ctrl+C / SIGTERM → 等待 → 强制"""
         self.alive = False
-        try:
-            if IS_WINDOWS:
+        timeout = float(store.get_setting('stop_timeout', 5))
+        if IS_WINDOWS:
+            try: self.proc.write('\x03')
+            except Exception: pass
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    if not self.proc.isalive():
+                        break
+                except Exception:
+                    break
+                time.sleep(0.1)
+            try:
+                getattr(self.proc, 'kill', self.proc.close)()
+            except Exception:
                 try: self.proc.close()
                 except Exception: pass
-            else:
-                try: os.kill(self.proc["pid"], signal.SIGTERM)
+        else:
+            pid = self.proc["pid"]
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except Exception:
+                try: os.kill(pid, signal.SIGTERM)
                 except Exception: pass
-        except Exception:
-            pass
+            deadline = time.time() + timeout
+            exited = False
+            while time.time() < deadline:
+                try:
+                    wpid, _ = os.waitpid(pid, os.WNOHANG)
+                    if wpid == pid:
+                        exited = True
+                        break
+                except ChildProcessError:
+                    exited = True
+                    break
+                time.sleep(0.1)
+            if not exited:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception:
+                    try: os.kill(pid, signal.SIGKILL)
+                    except Exception: pass
 
 
 sessions = {}
@@ -944,6 +1059,9 @@ def get_perf():
     return result
 
 
+perf_broadcaster = PerfBroadcaster(socketio, store)
+
+
 # ============================================================
 # 路由
 # ============================================================
@@ -953,7 +1071,7 @@ def login():
         is_first = store.data.get('auth') is None
         return render_template(
             'login.html', is_first=is_first,
-            title=store.data['settings'].get('panel_title', 'PSh Panel'))
+            title=store.get_setting('panel_title', 'PSh Panel'))
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
     if len(password) < 4:
@@ -981,7 +1099,7 @@ def logout():
 def index():
     return render_template(
         'base.html',
-        title=store.data['settings'].get('panel_title', 'PSh Panel'))
+        title=store.get_setting('panel_title', 'PSh Panel'))
 
 
 @app.route('/page/<name>')
@@ -1026,7 +1144,9 @@ def api_task_action(task_id, action):
     if action == 'start':
         return jsonify(task_manager.start(task_id))
     if action == 'stop':
-        return jsonify(task_manager.stop(task_id))
+        return jsonify(task_manager.stop(task_id, force=False))
+    if action == 'force-stop':
+        return jsonify(task_manager.stop(task_id, force=True))
     if action == 'restart':
         return jsonify(task_manager.restart(task_id))
     abort(404)
@@ -1155,7 +1275,6 @@ def api_file_delete():
     path = resolve_path(data.get('path', ''))
     if not path:
         return jsonify({"error": "invalid"}), 400
-
     protected = protected_paths()
     norm = path.rstrip('/\\') or path
     for p in protected:
@@ -1163,7 +1282,6 @@ def api_file_delete():
             return jsonify({"error": "refused: protected path"}), 403
     if len(norm) <= 3 and not IS_WINDOWS:
         return jsonify({"error": "refused"}), 403
-
     p = Path(path)
     if not p.exists():
         return jsonify({"error": "not found"}), 404
@@ -1216,7 +1334,7 @@ def api_settings():
     data = request.get_json() or {}
     with store.lock:
         for k in ('scrollback', 'font_size', 'max_history',
-                  'panel_title', 'perf_interval'):
+                  'panel_title', 'perf_interval', 'stop_timeout'):
             if k in data:
                 store.data['settings'][k] = data[k]
         store.save()
@@ -1242,12 +1360,27 @@ def api_password():
 @app.route('/api/system')
 @login_required
 def api_system():
+    # 尝试获取 socketio 库版本
+    try:
+        import socketio as _pysio
+        py_sio_ver = getattr(_pysio, '__version__', '?')
+    except Exception:
+        py_sio_ver = '?'
+    try:
+        import flask_socketio as _fsio
+        flask_sio_ver = getattr(_fsio, '__version__', '?')
+    except Exception:
+        flask_sio_ver = '?'
+
     return jsonify({
         "platform": "windows" if IS_WINDOWS else ("darwin" if sys.platform == "darwin" else "linux"),
         "python": sys.version.split()[0],
         "default_shell": default_shell(),
         "has_pty": (PtyProcess is not None) if IS_WINDOWS else True,
         "has_psutil": psutil is not None,
+        "py_socketio": py_sio_ver,
+        "flask_socketio": flask_sio_ver,
+        "client_protocol": 5,   # Socket.IO v4 客户端的协议号
     })
 
 
@@ -1302,6 +1435,22 @@ def sio_task_resize(data):
         pty_resize(rt.process, rows, cols)
     except Exception:
         pass
+
+
+@socketio.on('perf:subscribe')
+def sio_perf_subscribe():
+    join_room('perf')
+    perf_broadcaster.subscribe(request.sid)
+    try:
+        emit('perf:data', get_perf())
+    except Exception:
+        pass
+
+
+@socketio.on('perf:unsubscribe')
+def sio_perf_unsubscribe():
+    leave_room('perf')
+    perf_broadcaster.unsubscribe(request.sid)
 
 
 @socketio.on('term:create')
@@ -1363,23 +1512,8 @@ def sio_term_close(data):
     term_id = data.get('term_id')
     sess = sessions.pop(term_id, None)
     if sess:
-        sess.close()
+        threading.Thread(target=sess.close, daemon=True).start()
 
-@socketio.on('perf:subscribe')
-def sio_perf_subscribe():
-    join_room('perf')
-    perf_broadcaster.subscribe(request.sid)
-    # 立刻推一次，避免等一个周期
-    try:
-        emit('perf:data', get_perf())
-    except Exception:
-        pass
-
-
-@socketio.on('perf:unsubscribe')
-def sio_perf_unsubscribe():
-    leave_room('perf')
-    perf_broadcaster.unsubscribe(request.sid)
 
 @socketio.on('disconnect')
 def sio_disconnect():
@@ -1410,6 +1544,8 @@ if __name__ == '__main__':
     print(f"  http://0.0.0.0:{port}")
     print(f"  Data: {STORE_FILE}")
     print("=" * 56)
+
+    perf_broadcaster.start()
 
     def _delayed_start():
         time.sleep(2)

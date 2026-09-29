@@ -1,0 +1,18 @@
+{
+  "auth": {
+    "salt": "56a3a53ec0a735db3fdf49a8f853460d",
+    "hash": "4eaee3470cc1355df51c32e927d9d5909bf972d9637711bac1e8ff8511f27b4d",
+    "iterations": 260000
+  },
+  "secret_key": "eafacaa8361b97b42dd1d2fc74e548eaa15222633150325f953d968c84fde90e",
+  "settings": {
+    "scrollback": 5000,
+    "font_size": 14,
+    "max_history": 10,
+    "panel_title": "PSh Panel",
+    "perf_interval": 2000,
+    "stop_timeout": 5
+  },
+  "tasks": {},
+  "history": {}
+}

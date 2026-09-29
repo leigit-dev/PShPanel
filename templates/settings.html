@@ -1,35 +1,160 @@
 <div class="page-settings">
-  <div class="glass panel settings-panel">
-    <div class="panel-header"><h2>面板设置</h2></div>
-    <div class="form-row">
-      <label>面板标题</label>
-      <input type="text" id="set-title">
+
+  <!-- ========== 连接状态（横跨两列） ========== -->
+  <div class="glass panel settings-panel span-2">
+    <div class="panel-header">
+      <h2>连接状态</h2>
     </div>
-    <div class="form-row">
-      <label>终端保留行数</label>
-      <input type="number" id="set-scrollback" min="500" max="100000">
+    <div class="status-grid">
+      <div class="status-item">
+        <div class="status-label">传输方式</div>
+        <div class="status-value">
+          <span class="conn-badge" id="conn-transport">-</span>
+        </div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">连接状态</div>
+        <div class="status-value">
+          <span class="conn-dot" id="conn-dot"></span>
+          <span id="conn-state">-</span>
+        </div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">延迟</div>
+        <div class="status-value" id="conn-latency">-</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">已连接时长</div>
+        <div class="status-value" id="conn-uptime">-</div>
+      </div>
+      <div class="status-item span-2-inner">
+        <div class="status-label">Socket ID</div>
+        <div class="status-value mono" id="conn-sid">-</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">最近重连</div>
+        <div class="status-value" id="conn-last-reconnect">-</div>
+      </div>
     </div>
-    <div class="form-row">
-      <label>终端字号</label>
-      <input type="number" id="set-font" min="10" max="24">
-    </div>
-    <div class="form-row">
-      <label>历史保留次数</label>
-      <input type="number" id="set-history" min="1" max="100">
-    </div>
-    <div class="form-row">
-      <label>性能刷新间隔 (ms)</label>
-      <input type="number" id="set-perf" min="500" max="10000" step="500">
-    </div>
-    <button class="btn-primary" id="btn-save-settings">保存</button>
   </div>
 
+  <!-- ========== 面板设置 ========== -->
   <div class="glass panel settings-panel">
-    <div class="panel-header"><h2>修改密码</h2></div>
-    <div class="form-row"><label>旧密码</label><input type="password" id="pwd-old"></div>
-    <div class="form-row"><label>新密码</label><input type="password" id="pwd-new"></div>
-    <div class="form-row"><label>确认新密码</label><input type="password" id="pwd-new2"></div>
-    <button class="btn-primary" id="btn-save-pwd">修改密码</button>
-    <div class="form-msg" id="pwd-msg"></div>
+    <div class="panel-header">
+      <h2>面板设置</h2>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label>面板标题</label>
+        <input type="text" id="set-title" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>终端保留行数</label>
+        <input type="number" id="set-scrollback" min="500" max="100000">
+      </div>
+      <div class="form-row">
+        <label>终端字号</label>
+        <input type="number" id="set-font" min="10" max="24">
+      </div>
+      <div class="form-row">
+        <label>历史保留次数</label>
+        <input type="number" id="set-history" min="1" max="100">
+      </div>
+      <div class="form-row">
+        <label>性能刷新间隔</label>
+        <div class="input-suffix">
+          <input type="number" id="set-perf" min="500" max="10000" step="500">
+          <span class="suffix">ms</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>优雅退出等待</label>
+        <div class="input-suffix">
+          <input type="number" id="set-stop-timeout" min="1" max="60">
+          <span class="suffix">s</span>
+        </div>
+        <div class="form-hint">停止任务时先发送温和信号，超时后再强制终止</div>
+      </div>
+    </div>
+    <div class="panel-actions">
+      <span class="form-msg" id="settings-msg"></span>
+      <button class="btn-primary" id="btn-save-settings">保存设置</button>
+    </div>
   </div>
+
+  <!-- ========== 系统信息 ========== -->
+  <div class="glass panel settings-panel">
+    <div class="panel-header">
+      <h2>系统信息</h2>
+    </div>
+    <div class="info-list">
+      <div class="info-row">
+        <span class="info-key">平台</span>
+        <span class="info-val" id="sys-platform">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Python</span>
+        <span class="info-val" id="sys-python">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">默认 Shell</span>
+        <span class="info-val mono" id="sys-shell">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">PTY 后端</span>
+        <span class="info-val" id="sys-pty">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">psutil</span>
+        <span class="info-val" id="sys-psutil">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Socket.IO</span>
+        <span class="info-val mono" id="sys-socketio">-</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 修改密码 ========== -->
+  <div class="glass panel settings-panel">
+    <div class="panel-header">
+      <h2>修改密码</h2>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label>旧密码</label>
+        <input type="password" id="pwd-old" autocomplete="current-password">
+      </div>
+      <div class="form-row">
+        <label>新密码</label>
+        <input type="password" id="pwd-new" autocomplete="new-password">
+      </div>
+      <div class="form-row">
+        <label>确认新密码</label>
+        <input type="password" id="pwd-new2" autocomplete="new-password">
+      </div>
+    </div>
+    <div class="panel-actions">
+      <span class="form-msg" id="pwd-msg"></span>
+      <button class="btn-primary" id="btn-save-pwd">修改密码</button>
+    </div>
+  </div>
+
+  <!-- ========== 关于 ========== -->
+  <div class="glass panel settings-panel">
+    <div class="panel-header">
+      <h2>关于</h2>
+    </div>
+    <div class="about-block">
+      <div class="about-logo">▣</div>
+      <div class="about-info">
+        <div class="about-name">PSh Panel</div>
+        <div class="about-desc">轻量级服务器控制面板</div>
+        <div class="about-desc">PTY / PIPE 双模式任务管理</div>
+        <div class="about-license">MIT License</div>
+        <div class="about-license">© 2025 PSh Panel Contributors</div>
+      </div>
+    </div>
+  </div>
+
 </div>
