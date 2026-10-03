@@ -10,6 +10,7 @@ from pathlib import Path
 from flask import (Flask, render_template, request, jsonify, session,
                    send_file, abort, redirect, url_for)
 from flask_socketio import SocketIO, emit, join_room, leave_room
+import re as _re
 
 try:
     import psutil
@@ -151,6 +152,43 @@ with store.lock:
         store.data['settings'].setdefault(k, v)
     store.data.setdefault('login_fails', {})
     store.data.setdefault('locked_ips', {})
+
+
+
+# ============================================================
+# 环境变量解析
+# 只接受两种声明形式：
+#     set KEY=VALUE
+#     export KEY=VALUE
+# KEY 必须是 [A-Za-z_][A-Za-z0-9_]*
+# ============================================================
+_RE_SET_DECL    = _re.compile(r'^\s*set\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*$',
+                              _re.IGNORECASE)
+_RE_EXPORT_DECL = _re.compile(r'^\s*export\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*$')
+
+
+def _strip_quotes(v: str) -> str:
+    """去掉首尾成对的单/双引号。"""
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1]
+    return v
+
+
+def _parse_env_decl(line: str):
+    """
+    从一行文本解析环境变量声明。
+    命中 `set KEY=VALUE` 或 `export KEY=VALUE` 返回 (key, value)，否则返回 None。
+    """
+    if not line:
+        return None
+    m = _RE_EXPORT_DECL.match(line) or _RE_SET_DECL.match(line)
+    if not m:
+        return None
+    k = m.group(1)
+    v = _strip_quotes(m.group(2))
+    return k, v
+
+
 
 
 # ============================================================
@@ -587,93 +625,167 @@ class TaskManager:
                            room=f"task-env:{rt.task_id}")
 
     def _run_env_script(self, rt, task, timeout=15):
+        """
+        执行环境脚本：
+          · env_script 是一条可执行命令（如 python gen_env.py / ./env.sh）
+          · 从它的 stdout 和脚本源码中解析 `set KEY=VALUE` / `export KEY=VALUE`
+          · stdout / stderr 全部记录，通过 task:env-output 推给订阅者
+        """
         script = (task.get("env_script") or "").strip()
-        if not script: return {}
+        if not script:
+            return {}
+
         cwd = task.get("cwd") or str(BASE_DIR)
         py = self.store.get_setting('python_path', '') or ''
-        script = rewrite_python(script, py)
+
+        # 头部 python 替换（保留原有能力）
+        exec_script = rewrite_python(script, py)
 
         self._set_env_status(rt, 'running')
-        self._emit_env(rt, 'stdout', f"$ {script}\n# cwd: {cwd}\n\n")
+        self._emit_env(rt, 'stdout', f"$ {exec_script}\n# cwd: {cwd}\n\n")
 
         try:
-            exec_cmd = script
-            first = script.split()[0]
-            if first.startswith(('./', '../', '.\\', '..\\')):
-                abs_first = str((Path(cwd) / first).resolve())
-                exec_cmd = script.replace(first, abs_first, 1)
-            kwargs = dict(shell=True, cwd=cwd, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                          env={**os.environ, **({'PYTHON': py} if py else {})}, bufsize=0)
+            exec_cmd = exec_script
+            # 相对路径的脚本（./xxx、..\xxx）转绝对路径
+            try:
+                first = exec_script.split()[0]
+                if first.startswith(('./', '../', '.\\', '..\\')):
+                    abs_first = str((Path(cwd) / first).resolve())
+                    exec_cmd = exec_script.replace(first, abs_first, 1)
+            except Exception:
+                pass
+
+            # 环境准备
+            env_for_script = os.environ.copy()
+            if py:
+                env_for_script['PYTHON'] = py
+
+            kwargs = dict(
+                shell=True,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                env=env_for_script,
+                bufsize=0,
+            )
             if IS_WINDOWS:
                 kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             else:
                 kwargs["preexec_fn"] = os.setsid
+
             proc = subprocess.Popen(exec_cmd, **kwargs)
 
+            # ---- stdout / stderr 泵 ----
             def pump(stream, name):
                 try:
                     for line in iter(stream.readline, b''):
-                        if not line: break
-                        self._emit_env(rt, name, line.decode('utf-8', errors='replace'))
+                        if not line:
+                            break
+                        self._emit_env(rt, name,
+                                       line.decode('utf-8', errors='replace'))
                 except Exception as e:
                     self._emit_env(rt, 'stderr', f"[read error] {e}\n")
                 finally:
-                    try: stream.close()
-                    except Exception: pass
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
 
-            t_out = threading.Thread(target=pump, args=(proc.stdout, 'stdout'), daemon=True)
-            t_err = threading.Thread(target=pump, args=(proc.stderr, 'stderr'), daemon=True)
-            t_out.start(); t_err.start()
+            t_out = threading.Thread(target=pump, args=(proc.stdout, 'stdout'),
+                                     daemon=True)
+            t_err = threading.Thread(target=pump, args=(proc.stderr, 'stderr'),
+                                     daemon=True)
+            t_out.start()
+            t_err.start()
 
+            # ---- 等待进程结束（带超时） ----
             timed_out = False
-            try: proc.wait(timeout=timeout)
+            try:
+                proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 timed_out = True
                 try:
                     if IS_WINDOWS:
-                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            timeout=3,
+                        )
                     else:
                         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except Exception:
-                    try: proc.kill()
-                    except Exception: pass
-                self._emit_env(rt, 'stderr', f"\n[env script timed out after {timeout}s]\n")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                self._emit_env(rt, 'stderr',
+                               f"\n[env script timed out after {timeout}s]\n")
 
-            t_out.join(timeout=1); t_err.join(timeout=1)
+            t_out.join(timeout=1)
+            t_err.join(timeout=1)
             rt.env_exit_code = proc.returncode
 
+            # ---- 解析环境变量 ----
             env_vars = {}
+
+            # 1) 从 stdout 解析（只认 set / export 行）
             for _, stream, text in rt.env_buffer:
-                if stream != 'stdout': continue
-                for line in text.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith('$ ') or line.startswith('# '): continue
-                    if line.startswith('export '): line = line[7:].strip()
-                    if '=' not in line: continue
-                    k, v = line.split('=', 1)
-                    k, v = k.strip(), v.strip()
-                    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"): v = v[1:-1]
-                    if not k or not k.replace('_', '').isalnum(): continue
-                    env_vars[k] = v
+                if stream != 'stdout':
+                    continue
+                for raw in text.splitlines():
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    # 跳过面板自己写的回显行
+                    if line.startswith('$ ') or line.startswith('# '):
+                        continue
+                    if line.startswith('# cwd:'):
+                        continue
+                    parsed = _parse_env_decl(line)
+                    if parsed:
+                        env_vars[parsed[0]] = parsed[1]
+
+            # 2) 从脚本源码解析（同样只认 set / export 行）
+            for raw in exec_script.splitlines():
+                line = raw.strip()
+                if not line or line.startswith('#') or line.startswith('//'):
+                    continue
+                parsed = _parse_env_decl(line)
+                if parsed and parsed[0] not in env_vars:
+                    env_vars[parsed[0]] = parsed[1]
+
             rt.env_vars = env_vars
 
+            # ---- 状态设置 ----
             if timed_out:
-                self._set_env_status(rt, 'error', exit_code=proc.returncode,
-                                     vars=env_vars, reason='timeout')
+                self._set_env_status(rt, 'error',
+                                     exit_code=proc.returncode,
+                                     vars=env_vars,
+                                     reason='timeout')
             elif proc.returncode != 0:
-                self._set_env_status(rt, 'error', exit_code=proc.returncode,
-                                     vars=env_vars, reason='nonzero_exit')
-                self._emit_env(rt, 'stderr', f"\n[env script exited with code {proc.returncode}]\n")
+                self._set_env_status(rt, 'error',
+                                     exit_code=proc.returncode,
+                                     vars=env_vars,
+                                     reason='nonzero_exit')
+                self._emit_env(rt, 'stderr',
+                               f"\n[env script exited with code {proc.returncode}]\n")
             else:
-                self._set_env_status(rt, 'ok', exit_code=0, vars=env_vars)
-                self._emit_env(rt, 'stdout', f"\n[env script ok: {len(env_vars)} variable(s) parsed]\n")
+                self._set_env_status(rt, 'ok',
+                                     exit_code=0, vars=env_vars)
+                self._emit_env(rt, 'stdout',
+                               f"\n[env script ok: {len(env_vars)} variable(s) parsed]\n")
+
             return env_vars
+
         except FileNotFoundError as e:
             self._set_env_status(rt, 'error', error=f'command not found: {e}')
-            self._emit_env(rt, 'stderr', f"\n[env script error] 命令未找到：{script.split()[0]}\n")
+            self._emit_env(rt, 'stderr',
+                           f"\n[env script error] 命令未找到：{exec_script.split()[0]}\n"
+                           f"  请确认该命令在 PATH 中，或使用绝对路径\n")
             return {}
+
         except Exception as e:
             self._set_env_status(rt, 'error', error=str(e))
             self._emit_env(rt, 'stderr', f"\n[env script exception] {e}\n")

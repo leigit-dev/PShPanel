@@ -31,6 +31,9 @@
 
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
 <script>
+/* ============================================================
+   Socket.IO 连接
+   ============================================================ */
 const socket = io({
   transports: ['websocket', 'polling'],
   reconnection: true,
@@ -38,22 +41,53 @@ const socket = io({
   reconnectionDelay: 2000,
 });
 window.__socket = socket;
-window.initGlobalSocketHandlers(socket);
 
+if (typeof window.initGlobalSocketHandlers === 'function') {
+  window.initGlobalSocketHandlers(socket);
+} else {
+  console.error('[base] initGlobalSocketHandlers 未加载，请检查 common.js');
+}
+
+/* ============================================================
+   全局状态
+   ============================================================ */
 window.__settings = null;
 window.__pendingTaskFullscreen = null;
 window.__currentCleanup = null;
 window.__registerCleanup = function(fn) { window.__currentCleanup = fn; };
 
-// ===== Access 会话过期的统一检测 =====
+/* ============================================================
+   Cloudflare Access 会话过期检测
+   ============================================================ */
 window.__accessRedirecting = false;
+
 function checkAccessRedirect(r) {
   if (!r) return false;
   if (r.type === 'opaqueredirect' || r.type === 'error') return true;
   if (r.status === 0) return true;
   return false;
 }
-window.accessFetch = async function(url, options = {}) {
+
+function triggerAccessReload() {
+  if (window.__accessRedirecting) return;
+  window.__accessRedirecting = true;
+  fetch('/api/login-status', {credentials: 'same-origin', redirect: 'manual'})
+    .then(function(r) {
+      if (checkAccessRedirect(r)) {
+        alert('网关会话已过期，页面将重新加载');
+        location.reload();
+      } else {
+        window.__accessRedirecting = false;
+      }
+    })
+    .catch(function() {
+      alert('网关会话已过期，页面将重新加载');
+      location.reload();
+    });
+}
+
+window.accessFetch = async function(url, options) {
+  options = options || {};
   options.credentials = 'same-origin';
   options.redirect = 'manual';
   try {
@@ -64,36 +98,22 @@ window.accessFetch = async function(url, options = {}) {
     }
     return r;
   } catch (e) {
-    if (String(e).includes('Failed to fetch') || String(e).includes('NetworkError')) {
+    const msg = String(e);
+    if (msg.indexOf('Failed to fetch') >= 0 || msg.indexOf('NetworkError') >= 0) {
       triggerAccessReload();
     }
     throw e;
   }
 };
-function triggerAccessReload() {
-  if (window.__accessRedirecting) return;
-  window.__accessRedirecting = true;
-  // 探测一下会话是否真的失效
-  fetch('/api/login-status', {credentials: 'same-origin', redirect: 'manual'})
-    .then(r => {
-      if (checkAccessRedirect(r)) {
-        alert('网关会话已过期，页面将重新加载');
-        location.reload();
-      } else {
-        window.__accessRedirecting = false;
-      }
-    })
-    .catch(() => {
-      alert('网关会话已过期，页面将重新加载');
-      location.reload();
-    });
-}
 
-socket.on('connect_error', (err) => {
-  console.warn('Socket 连接失败:', err.message);
+socket.on('connect_error', function(err) {
+  console.warn('Socket 连接失败:', err && err.message);
   triggerAccessReload();
 });
 
+/* ============================================================
+   设置加载 / 登出
+   ============================================================ */
 async function loadSettings() {
   const r = await window.accessFetch('/api/settings');
   window.__settings = await r.json();
@@ -101,52 +121,95 @@ async function loadSettings() {
 }
 
 async function logout() {
-  await window.accessFetch('/logout', {method: 'POST'});
+  try {
+    await window.accessFetch('/logout', {method: 'POST'});
+  } catch (e) {}
   location.href = '/login';
 }
 
+/* ============================================================
+   页面切换 —— 关键修复：DOM 就绪后再加载脚本
+   ============================================================ */
 async function navigate(page) {
+  // 1. 清理上一页
   if (window.__currentCleanup) {
-    try { window.__currentCleanup(); } catch(e) { console.error(e); }
+    try { window.__currentCleanup(); } catch (e) { console.error(e); }
     window.__currentCleanup = null;
   }
-  document.querySelectorAll('.nav-item').forEach(el => {
+
+  // 2. 高亮导航
+  document.querySelectorAll('.nav-item').forEach(function(el) {
     el.classList.toggle('active', el.dataset.page === page);
   });
+
+  // 3. 拉取 HTML
   const container = document.getElementById('page-content');
   container.style.opacity = '0';
 
-  const r = await window.accessFetch(`/page/${page}`);
-  const html = await r.text();
-
-  requestAnimationFrame(() => {
-    container.innerHTML = html;
+  let html = '';
+  try {
+    const r = await window.accessFetch('/page/' + page);
+    html = await r.text();
+  } catch (e) {
+    container.innerHTML = '<div style="padding:24px;color:var(--danger)">页面加载失败</div>';
     container.style.opacity = '1';
+    return;
+  }
+
+  // 4. 等 rAF 把 HTML 写入 DOM 后，再 resolve —— 保证脚本执行时 DOM 已就绪
+  await new Promise(function(resolve) {
+    requestAnimationFrame(function() {
+      container.innerHTML = html;
+      container.style.opacity = '1';
+      // 强制一次布局读，确保 DOM 已应用
+      void container.offsetHeight;
+      resolve();
+    });
   });
 
-  document.querySelectorAll('script[data-page-script]').forEach(el => el.remove());
+  // 5. 移除上一个页面的脚本
+  document.querySelectorAll('script[data-page-script]').forEach(function(el) {
+    el.remove();
+  });
+
+  // 6. 加载页面对应脚本
   const s = document.createElement('script');
-  s.src = `/static/js/${page}.js?t=${Date.now()}`;
+  s.src = '/static/js/' + page + '.js?t=' + Date.now();
   s.dataset.pageScript = '1';
-  s.onload = () => window.dispatchEvent(new CustomEvent('page:loaded', {detail: {page}}));
+  s.onerror = function() {
+    console.error('[base] 脚本加载失败:', s.src);
+  };
+  s.onload = function() {
+    window.dispatchEvent(new CustomEvent('page:loaded', {detail: {page: page}}));
+  };
   document.body.appendChild(s);
 }
 
-document.querySelectorAll('.nav-item').forEach(el => {
-  el.addEventListener('click', e => {
+/* ============================================================
+   导航事件
+   ============================================================ */
+document.querySelectorAll('.nav-item').forEach(function(el) {
+  el.addEventListener('click', function(e) {
     e.preventDefault();
     navigate(el.dataset.page);
   });
-  el.addEventListener('mouseenter', () => {
+  el.addEventListener('mouseenter', function() {
     const page = el.dataset.page;
     if (!page || el.dataset.prefetched) return;
     el.dataset.prefetched = '1';
-    window.accessFetch(`/page/${page}`).catch(() => {});
+    window.accessFetch('/page/' + page).catch(function() {});
   });
 });
 
-document.addEventListener('DOMContentLoaded', async () => {
-  await loadSettings();
+/* ============================================================
+   启动
+   ============================================================ */
+document.addEventListener('DOMContentLoaded', async function() {
+  try {
+    await loadSettings();
+  } catch (e) {
+    console.warn('[base] 加载设置失败:', e);
+  }
   navigate('home');
 });
 </script>
