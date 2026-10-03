@@ -11,7 +11,6 @@
   </section>
 </div>
 
-<!-- ========== 任务配置弹窗 ========== -->
 <div class="modal" id="task-modal" hidden>
   <div class="glass modal-content task-modal-content">
     <div class="modal-header">
@@ -45,6 +44,15 @@
         <label>开机自启</label>
         <input type="checkbox" id="tm-enabled">
       </div>
+      <div class="form-row form-row-textarea">
+        <label>环境脚本</label>
+        <textarea id="tm-env-script" rows="4"
+          placeholder="执行一条命令来生成环境变量。&#10;该命令的 stdout 里所有 KEY=VALUE 行会被注入到任务进程中。&#10;&#10;例如：&#10;  python gen_env.py&#10;  ./scripts/env.sh&#10;  node -e &quot;console.log('PORT=8080')&quot;"></textarea>
+        <div class="form-hint">
+          脚本的 stdout 必须是 <code>KEY=VALUE</code> 每行一条；stderr 只用于诊断。
+          执行时的 cwd 与任务一致，超时 15 秒会被强制终止。
+        </div>
+      </div>
       <div class="form-msg" id="tm-msg"></div>
     </div>
     <div class="modal-footer">
@@ -54,7 +62,6 @@
   </div>
 </div>
 
-<!-- ========== 目录选择弹窗 ========== -->
 <div class="modal" id="dir-modal" hidden>
   <div class="glass modal-content dir-modal-content">
     <div class="modal-header">
@@ -74,7 +81,6 @@
   </div>
 </div>
 
-<!-- ========== 历史记录弹窗 ========== -->
 <div class="modal" id="history-modal" hidden>
   <div class="glass modal-content history-modal-content">
     <div class="modal-header">
@@ -84,6 +90,29 @@
     <div class="history-list" id="history-list"></div>
     <div class="modal-footer">
       <button class="icon-btn" id="history-modal-ok">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="env-modal" hidden>
+  <div class="glass modal-content env-modal-content">
+    <div class="modal-header">
+      <h3>环境脚本</h3>
+      <button class="icon-btn" id="env-modal-close">✕</button>
+    </div>
+    <div class="env-status-bar">
+      <span class="env-status-badge" id="env-status-badge">未运行</span>
+      <span class="env-exit" id="env-exit">-</span>
+      <span class="env-var-count" id="env-var-count">-</span>
+      <button class="icon-btn" id="env-refresh" style="margin-left:auto;">刷新</button>
+    </div>
+    <div class="env-vars-block" id="env-vars-block" hidden>
+      <div class="env-vars-title">已解析的环境变量</div>
+      <div class="env-vars-list" id="env-vars-list"></div>
+    </div>
+    <pre class="env-body" id="env-body">(暂无输出)</pre>
+    <div class="modal-footer">
+      <button class="icon-btn" id="env-modal-ok">关闭</button>
     </div>
   </div>
 </div>

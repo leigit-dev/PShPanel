@@ -8,7 +8,7 @@
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
 </head>
 <body>
 <div class="app">
@@ -31,55 +31,104 @@
 
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
 <script>
-const socket = io({transports: ['websocket', 'polling']});
+const socket = io({
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 2000,
+});
 window.__socket = socket;
 window.initGlobalSocketHandlers(socket);
 
 window.__settings = null;
 window.__pendingTaskFullscreen = null;
-
-// 页面清理钩子
 window.__currentCleanup = null;
-window.__registerCleanup = function(fn) {
-  window.__currentCleanup = fn;
+window.__registerCleanup = function(fn) { window.__currentCleanup = fn; };
+
+// ===== Access 会话过期的统一检测 =====
+window.__accessRedirecting = false;
+function checkAccessRedirect(r) {
+  if (!r) return false;
+  if (r.type === 'opaqueredirect' || r.type === 'error') return true;
+  if (r.status === 0) return true;
+  return false;
+}
+window.accessFetch = async function(url, options = {}) {
+  options.credentials = 'same-origin';
+  options.redirect = 'manual';
+  try {
+    const r = await fetch(url, options);
+    if (checkAccessRedirect(r)) {
+      triggerAccessReload();
+      throw new Error('access_redirect');
+    }
+    return r;
+  } catch (e) {
+    if (String(e).includes('Failed to fetch') || String(e).includes('NetworkError')) {
+      triggerAccessReload();
+    }
+    throw e;
+  }
 };
+function triggerAccessReload() {
+  if (window.__accessRedirecting) return;
+  window.__accessRedirecting = true;
+  // 探测一下会话是否真的失效
+  fetch('/api/login-status', {credentials: 'same-origin', redirect: 'manual'})
+    .then(r => {
+      if (checkAccessRedirect(r)) {
+        alert('网关会话已过期，页面将重新加载');
+        location.reload();
+      } else {
+        window.__accessRedirecting = false;
+      }
+    })
+    .catch(() => {
+      alert('网关会话已过期，页面将重新加载');
+      location.reload();
+    });
+}
+
+socket.on('connect_error', (err) => {
+  console.warn('Socket 连接失败:', err.message);
+  triggerAccessReload();
+});
 
 async function loadSettings() {
-  const r = await fetch('/api/settings');
+  const r = await window.accessFetch('/api/settings');
   window.__settings = await r.json();
   return window.__settings;
 }
 
 async function logout() {
-  await fetch('/logout', {method: 'POST'});
+  await window.accessFetch('/logout', {method: 'POST'});
   location.href = '/login';
 }
 
 async function navigate(page) {
-  // 触发上一页的清理
   if (window.__currentCleanup) {
     try { window.__currentCleanup(); } catch(e) { console.error(e); }
     window.__currentCleanup = null;
   }
-
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
-
-  const r = await fetch(`/page/${page}`);
-  const html = await r.text();
   const container = document.getElementById('page-content');
-  container.innerHTML = html;
+  container.style.opacity = '0';
 
-  // 移除上一个页面的脚本
+  const r = await window.accessFetch(`/page/${page}`);
+  const html = await r.text();
+
+  requestAnimationFrame(() => {
+    container.innerHTML = html;
+    container.style.opacity = '1';
+  });
+
   document.querySelectorAll('script[data-page-script]').forEach(el => el.remove());
-
   const s = document.createElement('script');
   s.src = `/static/js/${page}.js?t=${Date.now()}`;
   s.dataset.pageScript = '1';
-  s.onload = () => {
-    window.dispatchEvent(new CustomEvent('page:loaded', {detail: {page}}));
-  };
+  s.onload = () => window.dispatchEvent(new CustomEvent('page:loaded', {detail: {page}}));
   document.body.appendChild(s);
 }
 
@@ -87,6 +136,12 @@ document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', e => {
     e.preventDefault();
     navigate(el.dataset.page);
+  });
+  el.addEventListener('mouseenter', () => {
+    const page = el.dataset.page;
+    if (!page || el.dataset.prefetched) return;
+    el.dataset.prefetched = '1';
+    window.accessFetch(`/page/${page}`).catch(() => {});
   });
 });
 

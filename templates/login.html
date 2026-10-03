@@ -6,47 +6,125 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body class="login-body">
+  <form id="login-form" onsubmit="return false;">
   <div class="glass login-card">
     <div class="logo">▣</div>
     <h1>{{ title }}</h1>
     <p class="subtitle" id="subtitle">
       {% if is_first %}首次使用，请设置管理密码{% else %}请输入密码以继续{% endif %}
     </p>
-    <input type="password" id="password" placeholder="密码" autofocus>
+    <input type="password" id="password" placeholder="密码" autofocus autocomplete="current-password">
     {% if is_first %}
-    <input type="password" id="password2" placeholder="确认密码">
+    <input type="password" id="password2" placeholder="确认密码" autocomplete="new-password">
+    <div class="password-hint" id="pwd-hint">
+      至少 8 位，包含大小写字母 / 数字 / 符号中的任意两类
+    </div>
     {% endif %}
-    <button id="submitBtn">{% if is_first %}创建{% else %}进入{% endif %}</button>
+    <button type="submit" id="submitBtn">
+      {% if is_first %}创建{% else %}进入{% endif %}
+    </button>
     <div class="error" id="error"></div>
+    <div class="lockout" id="lockout" hidden></div>
   </div>
+  </form>
 <script>
 const isFirst = {{ 'true' if is_first else 'false' }};
+const btn = document.getElementById('submitBtn');
+const pwd = document.getElementById('password');
+const err = document.getElementById('error');
+const lockoutEl = document.getElementById('lockout');
+let lockoutTimer = null;
+
+function showLockout(seconds) {
+  lockoutEl.hidden = false;
+  btn.disabled = true;
+  let remain = seconds;
+  const render = () => {
+    lockoutEl.textContent = `账号已锁定，请等待 ${remain} 秒`;
+    if (remain <= 0) {
+      clearInterval(lockoutTimer);
+      lockoutEl.hidden = true;
+      btn.disabled = false;
+      return;
+    }
+    remain--;
+  };
+  render();
+  lockoutTimer = setInterval(render, 1000);
+}
+
+async function checkLockout() {
+  try {
+    const r = await fetch('/api/login-status', {credentials: 'same-origin'});
+    const d = await r.json();
+    if (d.locked && d.unlock_in > 0) showLockout(d.unlock_in);
+  } catch (e) {}
+}
+
+// 检测 Access 拦截：返回 0 或 opaqueredirect
+function isAccessBlocked(r) {
+  if (!r) return false;
+  if (r.type === 'opaqueredirect' || r.type === 'error') return true;
+  if (r.status === 0) return true;
+  return false;
+}
+
 async function submit() {
-  const pwd = document.getElementById('password').value;
-  const err = document.getElementById('error');
   err.textContent = '';
+  const password = pwd.value;
   if (isFirst) {
     const p2 = document.getElementById('password2').value;
-    if (pwd !== p2) { err.textContent = '两次输入不一致'; return; }
+    if (password !== p2) { err.textContent = '两次输入不一致'; return; }
   }
-  if (pwd.length < 4) { err.textContent = '密码至少 4 位'; return; }
-  const r = await fetch('/login', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({password: pwd})
-  });
-  const data = await r.json();
-  if (data.ok) location.href = '/';
-  else err.textContent = data.error || '失败';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password}),
+      credentials: 'same-origin',
+      redirect: 'manual',
+    });
+
+    if (isAccessBlocked(r)) {
+      err.textContent = '网关会话已过期，正在刷新页面…';
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+
+    const data = await r.json().catch(() => ({}));
+    if (data.ok) { location.href = '/'; return; }
+    if (r.status === 429) {
+      const m = (data.error || '').match(/(\d+)/);
+      showLockout(m ? parseInt(m[1]) : 60);
+      return;
+    }
+    err.textContent = data.error || '登录失败';
+  } catch (e) {
+    err.textContent = '网关会话已过期，正在刷新页面…';
+    setTimeout(() => location.reload(), 1500);
+  } finally {
+    if (lockoutEl.hidden) btn.disabled = false;
+  }
 }
-document.getElementById('submitBtn').onclick = submit;
-document.getElementById('password').addEventListener('keydown', e => {
+
+document.getElementById('login-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  submit();
+});
+pwd.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
+    e.preventDefault();
     if (isFirst) document.getElementById('password2').focus();
     else submit();
   }
 });
 const p2 = document.getElementById('password2');
-if (p2) p2.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+if (p2) p2.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); submit(); }
+});
+
+checkLockout();
 </script>
 </body>
 </html>
