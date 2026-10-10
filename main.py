@@ -3,6 +3,7 @@
 """PSh Panel - 跨平台服务器控制面板"""
 import os, sys, json, uuid, time, hmac, hashlib, secrets, threading
 import subprocess, shutil, signal, string, socket as _socket
+import re as _re
 from collections import deque
 from functools import wraps
 from pathlib import Path
@@ -10,7 +11,6 @@ from pathlib import Path
 from flask import (Flask, render_template, request, jsonify, session,
                    send_file, abort, redirect, url_for)
 from flask_socketio import SocketIO, emit, join_room, leave_room
-import re as _re
 
 try:
     import psutil
@@ -94,10 +94,30 @@ def rewrite_python(cmd, python_path):
 
 
 # ============================================================
-# 存储层
+# 环境变量解析：只认 set/export 前缀
+# ============================================================
+_RE_SET_DECL    = _re.compile(r'^\s*set\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*$', _re.IGNORECASE)
+_RE_EXPORT_DECL = _re.compile(r'^\s*export\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*$')
+
+
+def _strip_quotes(v):
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1]
+    return v
+
+
+def _parse_env_decl(line):
+    if not line: return None
+    m = _RE_EXPORT_DECL.match(line) or _RE_SET_DECL.match(line)
+    if not m: return None
+    return m.group(1), _strip_quotes(m.group(2))
+
+
+# ============================================================
+# 存储
 # ============================================================
 class Store:
-    def __init__(self, path: Path):
+    def __init__(self, path):
         self.path = path
         self._lock = threading.RLock()
         self._data = self._load()
@@ -119,10 +139,8 @@ class Store:
                 "scrollback": 5000, "font_size": 14, "max_history": 10,
                 "panel_title": "PSh Panel", "perf_interval": 5000,
                 "stop_timeout": 5, "python_path": "",
-                "min_password_len": 8,
-                "session_days": 7,
-                "max_login_attempts": 5,
-                "lockout_minutes": 5,
+                "min_password_len": 8, "session_days": 7,
+                "max_login_attempts": 5, "lockout_minutes": 5,
             },
             "tasks": {},
             "history": {},
@@ -141,7 +159,6 @@ class Store:
 
     @property
     def data(self): return self._data
-
     @property
     def lock(self): return self._lock
 
@@ -152,43 +169,6 @@ with store.lock:
         store.data['settings'].setdefault(k, v)
     store.data.setdefault('login_fails', {})
     store.data.setdefault('locked_ips', {})
-
-
-
-# ============================================================
-# 环境变量解析
-# 只接受两种声明形式：
-#     set KEY=VALUE
-#     export KEY=VALUE
-# KEY 必须是 [A-Za-z_][A-Za-z0-9_]*
-# ============================================================
-_RE_SET_DECL    = _re.compile(r'^\s*set\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*$',
-                              _re.IGNORECASE)
-_RE_EXPORT_DECL = _re.compile(r'^\s*export\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*$')
-
-
-def _strip_quotes(v: str) -> str:
-    """去掉首尾成对的单/双引号。"""
-    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
-        return v[1:-1]
-    return v
-
-
-def _parse_env_decl(line: str):
-    """
-    从一行文本解析环境变量声明。
-    命中 `set KEY=VALUE` 或 `export KEY=VALUE` 返回 (key, value)，否则返回 None。
-    """
-    if not line:
-        return None
-    m = _RE_EXPORT_DECL.match(line) or _RE_SET_DECL.match(line)
-    if not m:
-        return None
-    k = m.group(1)
-    v = _strip_quotes(m.group(2))
-    return k, v
-
-
 
 
 # ============================================================
@@ -208,10 +188,8 @@ class LoginGuard:
                 for ip, info in self.store.data.get('login_fails', {}).items():
                     self._fails[ip] = info
                 for ip, ts in self.store.data.get('locked_ips', {}).items():
-                    if ts > time.time():
-                        self._locked[ip] = ts
-        except Exception:
-            pass
+                    if ts > time.time(): self._locked[ip] = ts
+        except Exception: pass
 
     def _persist(self):
         try:
@@ -219,8 +197,7 @@ class LoginGuard:
                 self.store.data['login_fails'] = self._fails
                 self.store.data['locked_ips'] = {k: v for k, v in self._locked.items() if v > time.time()}
                 self.store.save()
-        except Exception:
-            pass
+        except Exception: pass
 
     def get_client_ip(self):
         fwd = request.headers.get('X-Forwarded-For', '')
@@ -232,8 +209,7 @@ class LoginGuard:
     def is_locked(self, ip):
         with self._lock:
             unlock = self._locked.get(ip)
-            if unlock and unlock > time.time():
-                return True, unlock
+            if unlock and unlock > time.time(): return True, unlock
             if unlock: self._locked.pop(ip, None)
             return False, 0
 
@@ -279,13 +255,13 @@ login_guard = LoginGuard(store)
 PBKDF2_ITER = 260_000
 
 
-def hash_password(password: str):
+def hash_password(password):
     salt = secrets.token_bytes(16)
     h = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, PBKDF2_ITER)
     return {"salt": salt.hex(), "hash": h.hex(), "iterations": PBKDF2_ITER}
 
 
-def verify_password(password: str, record: dict) -> bool:
+def verify_password(password, record):
     if not record: return False
     salt = bytes.fromhex(record["salt"])
     h = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'),
@@ -293,7 +269,7 @@ def verify_password(password: str, record: dict) -> bool:
     return hmac.compare_digest(h.hex(), record["hash"])
 
 
-def password_strength(pwd: str, min_len: int = 8):
+def password_strength(pwd, min_len=8):
     if not isinstance(pwd, str): return False, '密码格式错误'
     if len(pwd) < min_len: return False, f'密码长度至少 {min_len} 位'
     kinds = 0
@@ -318,7 +294,7 @@ def login_required(f):
 
 
 # ============================================================
-# Flask / SocketIO
+# Flask
 # ============================================================
 app = Flask(__name__)
 app.config['SECRET_KEY'] = store.data.get('secret_key') or secrets.token_hex(32)
@@ -368,6 +344,7 @@ class TaskManager:
         self.lock = threading.RLock()
         self._pending = {}
         self._pending_lock = threading.Lock()
+        self._restart_locks = {}
         threading.Thread(target=self._flush_loop, daemon=True).start()
 
     def _flush_loop(self):
@@ -605,9 +582,29 @@ class TaskManager:
                 try: proc.kill()
                 except Exception: pass
 
-    def restart(self, tid):
-        self.stop(tid); time.sleep(0.5)
-        return self.start(tid)
+    def restart(self, tid, timeout=None, force=False):
+        with self.lock:
+            if self._restart_locks.get(tid):
+                return {"error": "restart already in progress"}
+            self._restart_locks[tid] = True
+
+        def _do():
+            try:
+                self.socketio.emit('task:status', {'task_id': tid, 'status': 'restarting'})
+                self.stop(tid, timeout=timeout, force=force)
+                rt = self.runtimes.get(tid)
+                if rt and rt.reader and rt.reader.is_alive():
+                    rt.reader.join(timeout=2.0)
+                if IS_WINDOWS:
+                    time.sleep(0.3)
+                self.start(tid)
+            except Exception as e:
+                print(f"[restart] {tid}: {e}")
+            finally:
+                self._restart_locks[tid] = False
+
+        threading.Thread(target=_do, daemon=True).start()
+        return {"ok": True, "async": True}
 
     # ---------- 环境脚本 ----------
     def _emit_env(self, rt, stream, text):
@@ -625,20 +622,10 @@ class TaskManager:
                            room=f"task-env:{rt.task_id}")
 
     def _run_env_script(self, rt, task, timeout=15):
-        """
-        执行环境脚本：
-          · env_script 是一条可执行命令（如 python gen_env.py / ./env.sh）
-          · 从它的 stdout 和脚本源码中解析 `set KEY=VALUE` / `export KEY=VALUE`
-          · stdout / stderr 全部记录，通过 task:env-output 推给订阅者
-        """
         script = (task.get("env_script") or "").strip()
-        if not script:
-            return {}
-
+        if not script: return {}
         cwd = task.get("cwd") or str(BASE_DIR)
         py = self.store.get_setting('python_path', '') or ''
-
-        # 头部 python 替换（保留原有能力）
         exec_script = rewrite_python(script, py)
 
         self._set_env_status(rt, 'running')
@@ -646,146 +633,102 @@ class TaskManager:
 
         try:
             exec_cmd = exec_script
-            # 相对路径的脚本（./xxx、..\xxx）转绝对路径
             try:
                 first = exec_script.split()[0]
                 if first.startswith(('./', '../', '.\\', '..\\')):
                     abs_first = str((Path(cwd) / first).resolve())
                     exec_cmd = exec_script.replace(first, abs_first, 1)
-            except Exception:
-                pass
+            except Exception: pass
 
-            # 环境准备
             env_for_script = os.environ.copy()
-            if py:
-                env_for_script['PYTHON'] = py
+            if py: env_for_script['PYTHON'] = py
 
-            kwargs = dict(
-                shell=True,
-                cwd=cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.DEVNULL,
-                env=env_for_script,
-                bufsize=0,
-            )
+            kwargs = dict(shell=True, cwd=cwd, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                          env=env_for_script, bufsize=0)
             if IS_WINDOWS:
                 kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             else:
                 kwargs["preexec_fn"] = os.setsid
-
             proc = subprocess.Popen(exec_cmd, **kwargs)
 
-            # ---- stdout / stderr 泵 ----
             def pump(stream, name):
                 try:
                     for line in iter(stream.readline, b''):
-                        if not line:
-                            break
-                        self._emit_env(rt, name,
-                                       line.decode('utf-8', errors='replace'))
+                        if not line: break
+                        self._emit_env(rt, name, line.decode('utf-8', errors='replace'))
                 except Exception as e:
                     self._emit_env(rt, 'stderr', f"[read error] {e}\n")
                 finally:
-                    try:
-                        stream.close()
-                    except Exception:
-                        pass
+                    try: stream.close()
+                    except Exception: pass
 
-            t_out = threading.Thread(target=pump, args=(proc.stdout, 'stdout'),
-                                     daemon=True)
-            t_err = threading.Thread(target=pump, args=(proc.stderr, 'stderr'),
-                                     daemon=True)
-            t_out.start()
-            t_err.start()
+            t_out = threading.Thread(target=pump, args=(proc.stdout, 'stdout'), daemon=True)
+            t_err = threading.Thread(target=pump, args=(proc.stderr, 'stderr'), daemon=True)
+            t_out.start(); t_err.start()
 
-            # ---- 等待进程结束（带超时） ----
             timed_out = False
-            try:
-                proc.wait(timeout=timeout)
+            try: proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 timed_out = True
+                # 先温和 SIGTERM，再强杀
                 try:
                     if IS_WINDOWS:
-                        subprocess.run(
-                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            timeout=3,
-                        )
+                        subprocess.run(["taskkill", "/T", "/PID", str(proc.pid)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
                     else:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except Exception:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception: pass
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
                     try:
-                        proc.kill()
+                        if IS_WINDOWS:
+                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+                        else:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     except Exception:
-                        pass
-                self._emit_env(rt, 'stderr',
-                               f"\n[env script timed out after {timeout}s]\n")
+                        try: proc.kill()
+                        except Exception: pass
+                self._emit_env(rt, 'stderr', f"\n[env script timed out after {timeout}s]\n")
 
-            t_out.join(timeout=1)
-            t_err.join(timeout=1)
+            t_out.join(timeout=1); t_err.join(timeout=1)
             rt.env_exit_code = proc.returncode
 
-            # ---- 解析环境变量 ----
             env_vars = {}
-
-            # 1) 从 stdout 解析（只认 set / export 行）
             for _, stream, text in rt.env_buffer:
-                if stream != 'stdout':
-                    continue
+                if stream != 'stdout': continue
                 for raw in text.splitlines():
                     line = raw.strip()
-                    if not line:
-                        continue
-                    # 跳过面板自己写的回显行
-                    if line.startswith('$ ') or line.startswith('# '):
-                        continue
-                    if line.startswith('# cwd:'):
-                        continue
+                    if not line: continue
+                    if line.startswith('$ ') or line.startswith('# '): continue
+                    if line.startswith('# cwd:'): continue
                     parsed = _parse_env_decl(line)
-                    if parsed:
-                        env_vars[parsed[0]] = parsed[1]
-
-            # 2) 从脚本源码解析（同样只认 set / export 行）
+                    if parsed: env_vars[parsed[0]] = parsed[1]
             for raw in exec_script.splitlines():
                 line = raw.strip()
-                if not line or line.startswith('#') or line.startswith('//'):
-                    continue
+                if not line or line.startswith('#') or line.startswith('//'): continue
                 parsed = _parse_env_decl(line)
                 if parsed and parsed[0] not in env_vars:
                     env_vars[parsed[0]] = parsed[1]
-
             rt.env_vars = env_vars
 
-            # ---- 状态设置 ----
             if timed_out:
-                self._set_env_status(rt, 'error',
-                                     exit_code=proc.returncode,
-                                     vars=env_vars,
-                                     reason='timeout')
+                self._set_env_status(rt, 'error', exit_code=proc.returncode,
+                                     vars=env_vars, reason='timeout')
             elif proc.returncode != 0:
-                self._set_env_status(rt, 'error',
-                                     exit_code=proc.returncode,
-                                     vars=env_vars,
-                                     reason='nonzero_exit')
-                self._emit_env(rt, 'stderr',
-                               f"\n[env script exited with code {proc.returncode}]\n")
+                self._set_env_status(rt, 'error', exit_code=proc.returncode,
+                                     vars=env_vars, reason='nonzero_exit')
+                self._emit_env(rt, 'stderr', f"\n[env script exited with code {proc.returncode}]\n")
             else:
-                self._set_env_status(rt, 'ok',
-                                     exit_code=0, vars=env_vars)
-                self._emit_env(rt, 'stdout',
-                               f"\n[env script ok: {len(env_vars)} variable(s) parsed]\n")
-
+                self._set_env_status(rt, 'ok', exit_code=0, vars=env_vars)
+                self._emit_env(rt, 'stdout', f"\n[env script ok: {len(env_vars)} variable(s) parsed]\n")
             return env_vars
-
         except FileNotFoundError as e:
             self._set_env_status(rt, 'error', error=f'command not found: {e}')
-            self._emit_env(rt, 'stderr',
-                           f"\n[env script error] 命令未找到：{exec_script.split()[0]}\n"
-                           f"  请确认该命令在 PATH 中，或使用绝对路径\n")
+            self._emit_env(rt, 'stderr', f"\n[env script error] 命令未找到：{exec_script.split()[0]}\n")
             return {}
-
         except Exception as e:
             self._set_env_status(rt, 'error', error=str(e))
             self._emit_env(rt, 'stderr', f"\n[env script exception] {e}\n")
@@ -865,6 +808,16 @@ class TaskManager:
     def _finalize(self, rt, code):
         rt.exit_code = code
         rt.status = 'exited'
+        with self._pending_lock:
+            pending_items = self._pending.pop(rt.task_id, None)
+        if pending_items:
+            merged = ''.join(t for _, t in pending_items)
+            if merged:
+                self.socketio.emit('task:output', {
+                    'task_id': rt.task_id,
+                    'seq': pending_items[-1][0],
+                    'data': merged,
+                }, room=f"task:{rt.task_id}")
         self.socketio.emit('task:status', {
             'task_id': rt.task_id, 'status': 'exited', 'exit_code': code,
         })
@@ -905,7 +858,70 @@ task_manager = TaskManager(store, socketio)
 
 
 # ============================================================
-# 任务 I/O 采样
+# Git Pull 会话（PTY）
+# ============================================================
+_git_sessions = {}
+_git_lock = threading.RLock()
+
+
+def _git_emit(task_id, text):
+    socketio.emit('git:output', {'task_id': task_id, 'data': text}, room=f"git:{task_id}")
+
+
+def _git_reader_win(task_id, proc):
+    try:
+        while True:
+            try:
+                data = pty_read(proc, 4096)
+                if data:
+                    if isinstance(data, bytes): data = data.decode('utf-8', errors='replace')
+                    _git_emit(task_id, data)
+                elif not proc.isalive(): break
+            except EOFError: break
+            except Exception as e:
+                _git_emit(task_id, f"\r\n[读取错误] {e}\r\n"); break
+    finally:
+        code = -1
+        try:
+            proc.wait(); code = proc.exitstatus
+        except Exception: pass
+        try: proc.close()
+        except Exception: pass
+        _git_finalize(task_id, code)
+
+
+def _git_reader_posix(task_id, proc):
+    fd = proc["fd"]
+    try:
+        while True:
+            r, _, _ = select.select([fd], [], [], 0.5)
+            if r:
+                try: data = os.read(fd, 4096)
+                except OSError: break
+                if not data: break
+                _git_emit(task_id, data.decode('utf-8', errors='replace'))
+    finally:
+        try: os.close(fd)
+        except Exception: pass
+        code = -1
+        try:
+            _, status = os.waitpid(proc["pid"], 0)
+            if hasattr(os, 'waitstatus_to_exitcode'):
+                code = os.waitstatus_to_exitcode(status)
+            elif os.WIFEXITED(status): code = os.WEXITSTATUS(status)
+            elif os.WIFSIGNALED(status): code = -os.WTERMSIG(status)
+        except Exception: pass
+        _git_finalize(task_id, code)
+
+
+def _git_finalize(task_id, code):
+    socketio.emit('git:done', {'task_id': task_id, 'exit_code': code}, room=f"git:{task_id}")
+    with _git_lock:
+        _git_sessions.pop(task_id, None)
+
+
+# ============================================================
+# 磁盘 / 网络采样
 # ============================================================
 _disk_state = {"lock": threading.RLock(), "last": {}}
 _net_alloc_state = {"lock": threading.RLock(), "ts": 0.0, "conns": {}, "total": 0}
@@ -962,6 +978,39 @@ _perf_last = {"net": None, "time": None}
 _perf_call_lock = threading.Lock()
 
 
+def _get_cpu_temperature():
+    """尝试获取 CPU 温度（°C）。返回 None 表示不可用。"""
+    # 1) psutil.sensors_temperatures（Linux / macOS）
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            for name in ('coretemp', 'cpu_thermal', 'soc_thermal',
+                         'k10temp', 'zenpower', 'acpitz'):
+                if name in temps and temps[name]:
+                    return round(float(temps[name][0].current), 1)
+            for entries in temps.values():
+                if entries:
+                    return round(float(entries[0].current), 1)
+    except Exception:
+        pass
+
+    # 2) 直接读 sysfs（ARM 常见）
+    if IS_POSIX:
+        for path in ('/sys/class/thermal/thermal_zone0/temp',
+                     '/sys/class/hwmon/hwmon0/temp1_input'):
+            try:
+                with open(path, 'r') as f:
+                    raw = f.read().strip()
+                val = float(raw)
+                if val > 1000:
+                    val /= 1000.0
+                return round(val, 1)
+            except Exception:
+                continue
+
+    return None
+
+
 class PerfBroadcaster:
     def __init__(self, socketio, store):
         self.socketio = socketio
@@ -1001,8 +1050,7 @@ class PerfBroadcaster:
                 continue
             try:
                 interval = float(self.store.get_setting('perf_interval', 5000)) / 1000.0
-            except Exception:
-                interval = 5.0
+            except Exception: interval = 5.0
             interval = max(0.5, min(interval, 30.0))
             if _perf_last["time"] is None:
                 try:
@@ -1180,7 +1228,7 @@ sessions = {}
 
 
 # ============================================================
-# 文件管理器
+# 文件管理辅助
 # ============================================================
 def list_roots():
     roots = []
@@ -1218,7 +1266,7 @@ def resolve_path(path):
     except Exception: return None
 
 
-def file_info(path: Path):
+def file_info(path):
     try:
         st = path.stat(); is_dir = path.is_dir()
         return {"name": path.name or str(path), "path": str(path),
@@ -1257,7 +1305,8 @@ def protected_paths():
 # ============================================================
 def get_perf():
     result = {
-        "cpu": {"percent": 0, "per_cpu": [], "count": 0, "freq": None},
+        "cpu": {"percent": 0, "per_cpu": [], "count": 0, "freq": None,
+                "freq_max": None, "load": None, "temperature": None},
         "memory": {"total": 0, "used": 0, "percent": 0,
                    "swap_total": 0, "swap_used": 0},
         "net": {"sent_rate": 0, "recv_rate": 0, "sent_total": 0, "recv_total": 0},
@@ -1271,8 +1320,21 @@ def get_perf():
     result["cpu"]["count"] = psutil.cpu_count()
     try:
         f = psutil.cpu_freq()
-        if f: result["cpu"]["freq"] = f.current
-    except Exception: pass
+        if f:
+            result["cpu"]["freq"] = f.current
+            result["cpu"]["freq_max"] = f.max
+    except Exception:
+        pass
+
+    # ---- 系统负载（Linux/macOS；Windows 返回 None）----
+    try:
+        load = os.getloadavg()
+        result["cpu"]["load"] = {"1m": load[0], "5m": load[1], "15m": load[2]}
+    except Exception:
+        result["cpu"]["load"] = None
+
+    # ---- CPU 温度 ----
+    result["cpu"]["temperature"] = _get_cpu_temperature()
 
     m = psutil.virtual_memory()
     result["memory"] = {"total": m.total, "used": m.used, "percent": m.percent,
@@ -1359,15 +1421,12 @@ def login():
         return render_template('login.html', is_first=is_first,
                                title=store.get_setting('panel_title', 'PSh Panel'))
     ip = login_guard.get_client_ip()
-
     locked, unlock_ts = login_guard.is_locked(ip)
     if locked:
         wait = int(unlock_ts - time.time())
         return jsonify({"error": f"尝试次数过多，请等待 {wait} 秒后重试"}), 429
-
     delay = login_guard.backoff_delay(ip)
-    if delay > 0:
-        time.sleep(min(delay, 3))
+    if delay > 0: time.sleep(min(delay, 3))
 
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
@@ -1375,19 +1434,16 @@ def login():
 
     if store.data.get('auth') is None:
         ok, msg = password_strength(password, min_len)
-        if not ok:
-            return jsonify({"error": msg}), 400
+        if not ok: return jsonify({"error": msg}), 400
         with store.lock:
             store.data['auth'] = hash_password(password)
             store.save()
-        session.permanent = True
-        session['auth'] = True
+        session.permanent = True; session['auth'] = True
         login_guard.record_success(ip)
         return jsonify({"ok": True, "is_first": True})
 
     if verify_password(password, store.data['auth']):
-        session.permanent = True
-        session['auth'] = True
+        session.permanent = True; session['auth'] = True
         login_guard.record_success(ip)
         return jsonify({"ok": True})
 
@@ -1418,6 +1474,7 @@ def page(name):
     return render_template(f'{name}.html')
 
 
+# ---------- 任务 API ----------
 @app.route('/api/tasks', methods=['GET', 'POST'])
 @login_required
 def api_tasks():
@@ -1447,10 +1504,11 @@ def api_task(tid):
 @app.route('/api/tasks/<tid>/<action>', methods=['POST'])
 @login_required
 def api_task_action(tid, action):
-    if action == 'start': return jsonify(task_manager.start(tid))
-    if action == 'stop': return jsonify(task_manager.stop(tid, force=False))
-    if action == 'force-stop': return jsonify(task_manager.stop(tid, force=True))
-    if action == 'restart': return jsonify(task_manager.restart(tid))
+    if action == 'start':       return jsonify(task_manager.start(tid))
+    if action == 'stop':        return jsonify(task_manager.stop(tid, force=False))
+    if action == 'force-stop':  return jsonify(task_manager.stop(tid, force=True))
+    if action == 'restart':     return jsonify(task_manager.restart(tid, force=False))
+    if action == 'force-restart': return jsonify(task_manager.restart(tid, force=True))
     abort(404)
 
 
@@ -1485,6 +1543,81 @@ def api_task_env_log(tid):
                     "latest_seq": rt.env_seq})
 
 
+@app.route('/api/tasks/<tid>/git-pull', methods=['POST'])
+@login_required
+def api_task_git_pull(tid):
+    task = task_manager.get_task(tid)
+    if not task: return jsonify({"error": "task not found"}), 404
+    rt = task_manager.runtimes.get(tid)
+    if rt and rt.status == 'running':
+        return jsonify({"error": "任务正在运行，请先停止"}), 400
+    cwd = task.get("cwd") or str(BASE_DIR)
+    if not os.path.isdir(cwd):
+        return jsonify({"error": f"工作目录不存在: {cwd}"}), 400
+    if not os.path.isdir(os.path.join(cwd, '.git')):
+        return jsonify({"error": "该目录不是 git 仓库"}), 400
+
+    with _git_lock:
+        if tid in _git_sessions:
+            return jsonify({"error": "已有 git pull 在执行"}), 409
+        _git_sessions[tid] = {"running": True}
+
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_ASKPASS"] = "echo"
+    env["TERM"] = "xterm-256color"
+    env["GIT_PAGER"] = "cat"
+    env["PAGER"] = "cat"
+
+    try:
+        if IS_WINDOWS:
+            if PtyProcess is None:
+                with _git_lock: _git_sessions.pop(tid, None)
+                return jsonify({"error": "pywinpty 未安装"}), 500
+            wrapped = f'cmd.exe /c "cd /d "{cwd}" && git pull"'
+            proc = PtyProcess.spawn(wrapped, dimensions=(30, 120), env=env)
+            threading.Thread(target=_git_reader_win, args=(tid, proc), daemon=True).start()
+        else:
+            pid, fd = pty.fork()
+            if pid == 0:
+                try:
+                    os.chdir(cwd)
+                    os.execvpe('/bin/sh', ['/bin/sh', '-c', 'git pull'], env)
+                except Exception: os._exit(127)
+            proc = {"pid": pid, "fd": fd}
+            threading.Thread(target=_git_reader_posix, args=(tid, proc), daemon=True).start()
+        return jsonify({"ok": True, "started": True})
+    except FileNotFoundError as e:
+        with _git_lock: _git_sessions.pop(tid, None)
+        return jsonify({"error": f"系统未安装 git: {e}"}), 500
+    except Exception as e:
+        with _git_lock: _git_sessions.pop(tid, None)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/tasks/<tid>/git-kill', methods=['POST'])
+@login_required
+def api_task_git_kill(tid):
+    with _git_lock:
+        sess = _git_sessions.get(tid)
+        if not sess: return jsonify({"ok": True})
+        proc = sess.get("proc")
+    if not proc: return jsonify({"ok": True})
+    try:
+        if IS_WINDOWS:
+            try: proc.write('\x03')
+            except Exception: pass
+            time.sleep(0.3)
+            try: getattr(proc, 'kill', proc.close)()
+            except Exception: pass
+        else:
+            try: os.killpg(os.getpgid(proc["pid"]), signal.SIGTERM)
+            except Exception: pass
+    except Exception: pass
+    return jsonify({"ok": True})
+
+
+# ---------- 文件 API ----------
 @app.route('/api/files/roots')
 @login_required
 def api_file_roots():
@@ -1611,6 +1744,7 @@ def api_file_write():
     return jsonify({"ok": True})
 
 
+# ---------- 性能 / 设置 / 密码 ----------
 @app.route('/api/perf')
 @login_required
 def api_perf():
@@ -1677,13 +1811,11 @@ def api_system():
     try:
         import socketio as _pysio
         py_sio_ver = getattr(_pysio, '__version__', '?')
-    except Exception:
-        py_sio_ver = '?'
+    except Exception: py_sio_ver = '?'
     try:
         import flask_socketio as _fsio
         flask_sio_ver = getattr(_fsio, '__version__', '?')
-    except Exception:
-        flask_sio_ver = '?'
+    except Exception: flask_sio_ver = '?'
     return jsonify({
         "platform": "windows" if IS_WINDOWS else ("darwin" if sys.platform == "darwin" else "linux"),
         "python": sys.version.split()[0],
@@ -1699,10 +1831,8 @@ def api_system():
 def api_login_status():
     ip = login_guard.get_client_ip()
     locked, unlock = login_guard.is_locked(ip)
-    return jsonify({
-        "locked": locked,
-        "unlock_in": max(0, int(unlock - time.time())) if locked else 0,
-    })
+    return jsonify({"locked": locked,
+                    "unlock_in": max(0, int(unlock - time.time())) if locked else 0})
 
 
 # ============================================================
@@ -1710,8 +1840,7 @@ def api_login_status():
 # ============================================================
 @socketio.on('connect')
 def sio_connect():
-    if not session.get('auth'):
-        return False
+    if not session.get('auth'): return False
 
 
 @socketio.on('task:subscribe')
@@ -1771,6 +1900,18 @@ def sio_task_env_subscribe(data):
 def sio_task_env_unsubscribe(data):
     tid = data.get('task_id')
     if tid: leave_room(f"task-env:{tid}")
+
+
+@socketio.on('git:subscribe')
+def sio_git_subscribe(data):
+    tid = data.get('task_id')
+    if tid: join_room(f"git:{tid}")
+
+
+@socketio.on('git:unsubscribe')
+def sio_git_unsubscribe(data):
+    tid = data.get('task_id')
+    if tid: leave_room(f"git:{tid}")
 
 
 @socketio.on('perf:subscribe')
@@ -1844,6 +1985,9 @@ def sio_disconnect():
     perf_broadcaster.unsubscribe(request.sid)
 
 
+# ============================================================
+# 自动启动
+# ============================================================
 def autostart_tasks():
     for task in task_manager.list_tasks():
         if task.get('enabled') and task['status'] != 'running':
@@ -1851,6 +1995,9 @@ def autostart_tasks():
             except Exception as e: print(f"[autostart] {task['name']}: {e}")
 
 
+# ============================================================
+# 入口
+# ============================================================
 if __name__ == '__main__':
     port = find_free_port(5000)
     print("=" * 56)

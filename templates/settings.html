@@ -1,85 +1,49 @@
 <div class="page-settings">
-
   <div class="glass panel settings-panel span-2">
     <div class="panel-header"><h2>连接状态</h2></div>
     <div class="status-grid">
-      <div class="status-item">
-        <div class="status-label">传输方式</div>
-        <div class="status-value"><span class="conn-badge" id="conn-transport">-</span></div>
-      </div>
-      <div class="status-item">
-        <div class="status-label">连接状态</div>
+      <div class="status-item"><div class="status-label">传输方式</div>
+        <div class="status-value"><span class="conn-badge" id="conn-transport">-</span></div></div>
+      <div class="status-item"><div class="status-label">连接状态</div>
         <div class="status-value">
           <span class="conn-dot" id="conn-dot"></span>
-          <span id="conn-state">-</span>
-        </div>
-      </div>
-      <div class="status-item">
-        <div class="status-label">延迟</div>
-        <div class="status-value" id="conn-latency">-</div>
-      </div>
-      <div class="status-item">
-        <div class="status-label">已连接时长</div>
-        <div class="status-value" id="conn-uptime">-</div>
-      </div>
-      <div class="status-item span-2-inner">
-        <div class="status-label">Socket ID</div>
-        <div class="status-value mono" id="conn-sid">-</div>
-      </div>
-      <div class="status-item">
-        <div class="status-label">最近重连</div>
-        <div class="status-value" id="conn-last-reconnect">-</div>
-      </div>
+          <span id="conn-state">-</span></div></div>
+      <div class="status-item"><div class="status-label">延迟</div>
+        <div class="status-value" id="conn-latency">-</div></div>
+      <div class="status-item"><div class="status-label">已连接时长</div>
+        <div class="status-value" id="conn-uptime">-</div></div>
+      <div class="status-item span-2-inner"><div class="status-label">Socket ID</div>
+        <div class="status-value mono" id="conn-sid">-</div></div>
+      <div class="status-item"><div class="status-label">最近重连</div>
+        <div class="status-value" id="conn-last-reconnect">-</div></div>
     </div>
   </div>
 
   <div class="glass panel settings-panel">
     <div class="panel-header"><h2>面板设置</h2></div>
     <div class="form-grid">
-      <div class="form-row">
-        <label>面板标题</label>
-        <input type="text" id="set-title" autocomplete="off">
-      </div>
-      <div class="form-row">
-        <label>终端保留行数</label>
-        <input type="number" id="set-scrollback" min="500" max="100000">
-      </div>
-      <div class="form-row">
-        <label>终端字号</label>
-        <input type="number" id="set-font" min="10" max="24">
-      </div>
-      <div class="form-row">
-        <label>历史保留次数</label>
-        <input type="number" id="set-history" min="1" max="100">
-      </div>
-      <div class="form-row">
-        <label>性能刷新间隔</label>
-        <div class="input-suffix">
-          <input type="number" id="set-perf" min="500" max="10000" step="500">
-          <span class="suffix">ms</span>
-        </div>
-      </div>
-      <div class="form-row">
-        <label>优雅退出等待</label>
-        <div class="input-suffix">
-          <input type="number" id="set-stop-timeout" min="1" max="60">
-          <span class="suffix">s</span>
-        </div>
-        <div class="form-hint">停止任务时先发送温和信号，超时后再强制终止</div>
-      </div>
-      <div class="form-row span-full">
-        <label>Python 解释器</label>
+      <div class="form-row"><label>面板标题</label>
+        <input type="text" id="set-title" autocomplete="off"></div>
+      <div class="form-row"><label>终端保留行数</label>
+        <input type="number" id="set-scrollback" min="500" max="100000"></div>
+      <div class="form-row"><label>终端字号</label>
+        <input type="number" id="set-font" min="10" max="24"></div>
+      <div class="form-row"><label>历史保留次数</label>
+        <input type="number" id="set-history" min="1" max="100"></div>
+      <div class="form-row"><label>性能刷新间隔</label>
+        <div class="input-suffix"><input type="number" id="set-perf" min="500" max="10000" step="500">
+          <span class="suffix">ms</span></div></div>
+      <div class="form-row"><label>优雅退出等待</label>
+        <div class="input-suffix"><input type="number" id="set-stop-timeout" min="1" max="60">
+          <span class="suffix">s</span></div>
+        <div class="form-hint">停止任务时先发送温和信号，超时后再强制终止</div></div>
+      <div class="form-row span-full"><label>Python 解释器</label>
         <div class="input-with-btn">
-          <input type="text" id="set-python-path"
-                 placeholder="留空 = 使用系统默认 python" autocomplete="off">
+          <input type="text" id="set-python-path" placeholder="留空 = 系统默认 python" autocomplete="off">
           <button class="icon-btn" id="btn-check-python" type="button">检测</button>
         </div>
-        <div class="form-hint">
-          任务和环境脚本的命令若以 <code>python</code> / <code>python3</code> 开头，
-          会自动替换为该解释器。同时注入环境变量 <code>PYTHON</code> 供脚本引用。
-        </div>
-        <div class="form-msg" id="python-msg"></div>
-      </div>
+        <div class="form-hint">命令以 <code>python</code> / <code>python3</code> 开头时会自动替换。同时注入 <code>PYTHON</code> 环境变量。</div>
+        <div class="form-msg" id="python-msg"></div></div>
     </div>
     <div class="panel-actions">
       <span class="form-msg" id="settings-msg"></span>
@@ -102,36 +66,27 @@
   <div class="glass panel settings-panel">
     <div class="panel-header"><h2>登录安全</h2></div>
     <div class="form-grid">
-      <div class="form-row">
-        <label>最大尝试次数</label>
-        <input type="number" id="set-max-attempts" min="3" max="20">
-      </div>
-      <div class="form-row">
-        <label>锁定时长</label>
-        <div class="input-suffix">
-          <input type="number" id="set-lockout-min" min="1" max="60">
-          <span class="suffix">分</span>
-        </div>
-      </div>
-      <div class="form-row">
-        <label>会话有效期</label>
-        <div class="input-suffix">
-          <input type="number" id="set-session-days" min="1" max="30">
-          <span class="suffix">天</span>
-        </div>
-      </div>
+      <div class="form-row"><label>最大尝试次数</label>
+        <input type="number" id="set-max-attempts" min="3" max="20"></div>
+      <div class="form-row"><label>锁定时长</label>
+        <div class="input-suffix"><input type="number" id="set-lockout-min" min="1" max="60">
+          <span class="suffix">分</span></div></div>
+      <div class="form-row"><label>会话有效期</label>
+        <div class="input-suffix"><input type="number" id="set-session-days" min="1" max="30">
+          <span class="suffix">天</span></div></div>
     </div>
-    <div class="form-hint" style="grid-column: 1 / -1;">
-      连续失败达到最大次数后，该 IP 会被锁定指定时长。会话有效期控制登录保持时长。
-    </div>
+    <div class="form-hint">连续失败达到最大次数后，该 IP 会被锁定指定时长。</div>
   </div>
-  <br>
+
   <div class="glass panel settings-panel span-2">
     <div class="panel-header"><h2>修改密码</h2></div>
     <div class="form-grid">
-      <div class="form-row"><label>旧密码</label><input type="password" id="pwd-old" autocomplete="current-password"></div>
-      <div class="form-row"><label>新密码</label><input type="password" id="pwd-new" autocomplete="new-password"></div>
-      <div class="form-row"><label>确认新密码</label><input type="password" id="pwd-new2" autocomplete="new-password"></div>
+      <div class="form-row"><label>旧密码</label>
+        <input type="password" id="pwd-old" autocomplete="current-password"></div>
+      <div class="form-row"><label>新密码</label>
+        <input type="password" id="pwd-new" autocomplete="new-password"></div>
+      <div class="form-row"><label>确认新密码</label>
+        <input type="password" id="pwd-new2" autocomplete="new-password"></div>
     </div>
     <div class="panel-actions">
       <span class="form-msg" id="pwd-msg"></span>
@@ -145,11 +100,9 @@
       <div class="about-logo">▣</div>
       <div class="about-info">
         <div class="about-name">PSh Panel</div>
-        <div class="about-desc">轻量级服务器控制面板</div>
-        <div class="about-desc">PTY / PIPE 双模式任务管理</div>
+        <div class="about-desc">轻量级服务器控制面板 · PTY / PIPE 双模式任务管理</div>
         <div class="about-license">MIT License · © 2025 PSh Panel Contributors</div>
       </div>
     </div>
   </div>
-
 </div>

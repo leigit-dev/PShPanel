@@ -58,9 +58,7 @@
     uptimeTimer = setInterval(() => { updateTransport(); updateState(); updateUptime(); }, 1000);
     const socket = window.__socket;
     if (socket && socket.on) {
-      socket.on('connect', () => {
-        connectStart = Date.now(); updateTransport(); updateState();
-      });
+      socket.on('connect', () => { connectStart = Date.now(); updateTransport(); updateState(); });
       socket.on('disconnect', updateState);
       try {
         if (socket.io && socket.io.engine && socket.io.engine.on) {
@@ -113,9 +111,7 @@
       fillSettings(window.__settings);
       setMsg('settings-msg', '已保存', false);
       setTimeout(() => setMsg('settings-msg', ''), 2000);
-    } catch (e) {
-      setMsg('settings-msg', '网络错误: ' + e.message, true);
-    }
+    } catch (e) { setMsg('settings-msg', '网络错误: ' + e.message, true); }
   }
 
   async function checkPython() {

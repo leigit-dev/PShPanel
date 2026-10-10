@@ -1,4 +1,3 @@
-/* PSh Panel - common.js */
 window.fmt = {
   bytes: function(n) {
     if (n === undefined || n === null) return '-';
@@ -27,27 +26,13 @@ window.fmt = {
 };
 
 window.XTERM_THEME = {
-  background: '#05070d',
-  foreground: '#e6edf7',
-  cursor: '#6ee7ff',
-  cursorAccent: '#05070d',
-  selectionBackground: 'rgba(79,158,255,0.35)',
-  black: '#1a2236',
-  red: '#ff5c7c',
-  green: '#4fd18b',
-  yellow: '#ffb45c',
-  blue: '#4f9eff',
-  magenta: '#c792ea',
-  cyan: '#6ee7ff',
-  white: '#e6edf7',
-  brightBlack: '#5c6b85',
-  brightRed: '#ff8aa3',
-  brightGreen: '#7ce8b0',
-  brightYellow: '#ffd28f',
-  brightBlue: '#82b8ff',
-  brightMagenta: '#dcb3ff',
-  brightCyan: '#a3f0ff',
-  brightWhite: '#ffffff'
+  background: '#05070d', foreground: '#e6edf7', cursor: '#6ee7ff',
+  cursorAccent: '#05070d', selectionBackground: 'rgba(79,158,255,0.35)',
+  black: '#1a2236', red: '#ff5c7c', green: '#4fd18b', yellow: '#ffb45c',
+  blue: '#4f9eff', magenta: '#c792ea', cyan: '#6ee7ff', white: '#e6edf7',
+  brightBlack: '#5c6b85', brightRed: '#ff8aa3', brightGreen: '#7ce8b0',
+  brightYellow: '#ffd28f', brightBlue: '#82b8ff', brightMagenta: '#dcb3ff',
+  brightCyan: '#a3f0ff', brightWhite: '#ffffff'
 };
 
 window.XTERM_OPTS = function(fontSize) {
@@ -57,13 +42,11 @@ window.XTERM_OPTS = function(fontSize) {
     if (window.__settings && window.__settings.scrollback) sb = window.__settings.scrollback;
   } catch (e) {}
   return {
-    cursorBlink: true,
-    fontSize: fontSize,
+    cursorBlink: true, fontSize: fontSize,
     fontFamily: '"SF Mono", Consolas, Menlo, monospace',
     theme: window.XTERM_THEME,
     scrollback: sb,
-    allowProposedApi: true,
-    convertEol: false
+    allowProposedApi: true, convertEol: true
   };
 };
 
@@ -100,24 +83,19 @@ window.SparkChart.prototype.draw = function() {
   var step = w / (this.maxPoints - 1);
   var self = this;
   var norm = function(v) { return h - (v / self.maxValue) * (h - 4) - 2; };
-  ctx.beginPath();
-  ctx.moveTo(0, h);
+  ctx.beginPath(); ctx.moveTo(0, h);
   for (var i = 0; i < points.length; i++) ctx.lineTo(i * step, norm(points[i]));
-  ctx.lineTo((points.length - 1) * step, h);
-  ctx.closePath();
+  ctx.lineTo((points.length - 1) * step, h); ctx.closePath();
   var grad = ctx.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, this.color + '55');
   grad.addColorStop(1, this.color + '00');
-  ctx.fillStyle = grad;
-  ctx.fill();
+  ctx.fillStyle = grad; ctx.fill();
   ctx.beginPath();
   for (var j = 0; j < points.length; j++) {
     var x = j * step, y = norm(points[j]);
     if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
-  ctx.strokeStyle = this.color;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  ctx.strokeStyle = this.color; ctx.lineWidth = 1.5; ctx.stroke();
 };
 
 window.__taskTerms = {};

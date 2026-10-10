@@ -18,39 +18,29 @@
       <button class="icon-btn" id="task-modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-row">
-        <label>任务名称</label>
-        <input type="text" id="tm-name" placeholder="例如：web server" autocomplete="off">
-      </div>
-      <div class="form-row">
-        <label>启动命令</label>
-        <input type="text" id="tm-command" placeholder="python -u main.py" autocomplete="off">
-      </div>
-      <div class="form-row">
-        <label>工作目录</label>
+      <div class="form-row"><label>任务名称</label>
+        <input type="text" id="tm-name" placeholder="例如：web server" autocomplete="off"></div>
+      <div class="form-row"><label>启动命令</label>
+        <input type="text" id="tm-command" placeholder="python -u main.py" autocomplete="off"></div>
+      <div class="form-row"><label>工作目录</label>
         <div class="input-with-btn">
           <input type="text" id="tm-cwd" placeholder="留空则用面板所在目录" autocomplete="off">
           <button class="icon-btn" id="tm-browse" type="button">浏览…</button>
-        </div>
-      </div>
-      <div class="form-row">
-        <label>模式</label>
+        </div></div>
+      <div class="form-row"><label>模式</label>
         <select id="tm-mode">
           <option value="pipe">PIPE — 只读（推荐跑服务器）</option>
           <option value="pty">PTY — 可交互（推荐跑 shell）</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label>开机自启</label>
-        <input type="checkbox" id="tm-enabled">
-      </div>
+        </select></div>
+      <div class="form-row"><label>开机自启</label>
+        <input type="checkbox" id="tm-enabled"></div>
       <div class="form-row form-row-textarea">
         <label>环境脚本</label>
         <textarea id="tm-env-script" rows="4"
-          placeholder="执行一条命令来生成环境变量。&#10;该命令的 stdout 里所有 KEY=VALUE 行会被注入到任务进程中。&#10;&#10;例如：&#10;  python gen_env.py&#10;  ./scripts/env.sh&#10;  node -e &quot;console.log('PORT=8080')&quot;"></textarea>
+          placeholder="执行一条命令来生成环境变量。&#10;只有 set KEY=VALUE 和 export KEY=VALUE 会被识别。&#10;&#10;例如：&#10;  set PORT=8080&#10;  export TOKEN=abc123&#10;  python -c &quot;print('set TOKEN=' + __import__('uuid').uuid4().hex)&quot;"></textarea>
         <div class="form-hint">
-          脚本的 stdout 必须是 <code>KEY=VALUE</code> 每行一条；stderr 只用于诊断。
-          执行时的 cwd 与任务一致，超时 15 秒会被强制终止。
+          stdout 和源码里的 <code>set KEY=VALUE</code> / <code>export KEY=VALUE</code> 会被注入任务进程。
+          stderr 只用于诊断，超时 15 秒会被强杀。
         </div>
       </div>
       <div class="form-msg" id="tm-msg"></div>
@@ -64,12 +54,10 @@
 
 <div class="modal" id="dir-modal" hidden>
   <div class="glass modal-content dir-modal-content">
-    <div class="modal-header">
-      <h3>选择目录</h3>
-      <button class="icon-btn" id="dir-modal-close">✕</button>
-    </div>
+    <div class="modal-header"><h3>选择目录</h3>
+      <button class="icon-btn" id="dir-modal-close">✕</button></div>
     <div class="dir-path-bar">
-      <button class="icon-btn" id="dir-up" title="上级目录" type="button">↑</button>
+      <button class="icon-btn" id="dir-up" title="上级" type="button">↑</button>
       <input type="text" id="dir-path-input" autocomplete="off">
       <button class="icon-btn" id="dir-go" type="button">转到</button>
     </div>
@@ -83,23 +71,18 @@
 
 <div class="modal" id="history-modal" hidden>
   <div class="glass modal-content history-modal-content">
-    <div class="modal-header">
-      <h3>运行历史</h3>
-      <button class="icon-btn" id="history-modal-close">✕</button>
-    </div>
+    <div class="modal-header"><h3>运行历史</h3>
+      <button class="icon-btn" id="history-modal-close">✕</button></div>
     <div class="history-list" id="history-list"></div>
     <div class="modal-footer">
-      <button class="icon-btn" id="history-modal-ok">关闭</button>
-    </div>
+      <button class="icon-btn" id="history-modal-ok">关闭</button></div>
   </div>
 </div>
 
 <div class="modal" id="env-modal" hidden>
   <div class="glass modal-content env-modal-content">
-    <div class="modal-header">
-      <h3>环境脚本</h3>
-      <button class="icon-btn" id="env-modal-close">✕</button>
-    </div>
+    <div class="modal-header"><h3>环境脚本</h3>
+      <button class="icon-btn" id="env-modal-close">✕</button></div>
     <div class="env-status-bar">
       <span class="env-status-badge" id="env-status-badge">未运行</span>
       <span class="env-exit" id="env-exit">-</span>
@@ -112,7 +95,41 @@
     </div>
     <pre class="env-body" id="env-body">(暂无输出)</pre>
     <div class="modal-footer">
-      <button class="icon-btn" id="env-modal-ok">关闭</button>
+      <button class="icon-btn" id="env-modal-ok">关闭</button></div>
+  </div>
+</div>
+
+<div class="modal" id="git-modal" hidden>
+  <div class="glass modal-content env-modal-content">
+    <div class="modal-header"><h3>Git Pull</h3>
+      <button class="icon-btn" id="git-modal-close">✕</button></div>
+    <div class="env-status-bar">
+      <span class="env-status-badge" id="git-status-badge">就绪</span>
+      <span class="env-exit" id="git-exit"></span>
+      <span class="env-var-count" id="git-cwd"></span>
+      <button class="icon-btn" id="git-kill" style="margin-left:auto;">中止</button>
+    </div>
+    <div class="git-term-wrap" id="git-term-wrap"></div>
+    <div class="modal-footer">
+      <button class="icon-btn" id="git-modal-ok">关闭</button></div>
+  </div>
+</div>
+
+<div class="modal" id="term-picker-modal" hidden>
+  <div class="glass modal-content term-picker-content">
+    <div class="modal-header"><h3>在此处打开终端</h3>
+      <button class="icon-btn" id="term-picker-close">✕</button></div>
+    <div class="modal-body">
+      <div class="form-row"><label>工作目录</label>
+        <input type="text" id="term-picker-cwd" readonly autocomplete="off"></div>
+      <div class="form-row"><label>终端命令</label>
+        <input type="text" id="term-picker-cmd" autocomplete="off"
+               placeholder="powershell.exe / cmd.exe / /bin/bash"></div>
+      <div class="form-msg" id="term-picker-msg"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="icon-btn" id="term-picker-cancel">取消</button>
+      <button class="btn-primary" id="term-picker-open">打开</button>
     </div>
   </div>
 </div>

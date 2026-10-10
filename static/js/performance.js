@@ -27,23 +27,51 @@
 
   function render(d) {
     if (!d) return;
+
+    // ---- CPU 主数值 ----
     cpuEl.textContent = (d.cpu.percent || 0).toFixed(1);
-    cpuInfo.textContent = `${d.cpu.count || 0} 核` +
-      (d.cpu.freq ? ` @ ${d.cpu.freq.toFixed(0)} MHz` : '') +
-      ` · 运行 ${fmt.duration(d.uptime)}`;
+
+    // ---- CPU 副信息：核心数 · 频率 · 负载 · 温度 · 运行时长 ----
+    var infoParts = [];
+    infoParts.push((d.cpu.count || 0) + ' 核');
+    if (d.cpu.freq) {
+      var freqStr = d.cpu.freq.toFixed(0) + ' MHz';
+      if (d.cpu.freq_max && d.cpu.freq_max > 0 &&
+          Math.abs(d.cpu.freq_max - d.cpu.freq) > 50) {
+        freqStr += ' / ' + d.cpu.freq_max.toFixed(0) + ' MHz';
+      }
+      infoParts.push(freqStr);
+    }
+    if (d.cpu.load && typeof d.cpu.load['1m'] === 'number') {
+      infoParts.push('负载 ' + d.cpu.load['1m'].toFixed(2));
+    }
+    if (d.cpu.temperature !== null && d.cpu.temperature !== undefined) {
+      infoParts.push(d.cpu.temperature.toFixed(1) + '°C');
+    }
+    infoParts.push('运行 ' + fmt.duration(d.uptime));
+    cpuInfo.textContent = infoParts.join(' · ');
+
+    // ---- 内存 ----
     memEl.textContent = (d.memory.percent || 0).toFixed(1);
     memInfo.textContent = `${fmt.bytes(d.memory.used)} / ${fmt.bytes(d.memory.total)}` +
       (d.memory.swap_total ? ` · Swap ${fmt.bytes(d.memory.swap_used)}/${fmt.bytes(d.memory.swap_total)}` : '');
+
+    // ---- 网络 ----
     const down = d.net.recv_rate || 0, up = d.net.sent_rate || 0;
     netEl.textContent = `↓ ${fmt.rate(down)} / ↑ ${fmt.rate(up)}`;
     netTotal.textContent = `累计 ↓ ${fmt.bytes(d.net.recv_total)} · ↑ ${fmt.bytes(d.net.sent_total)}`;
+
+    // ---- 磁盘 ----
     diskEl.textContent = (d.disk.percent || 0).toFixed(1);
     diskInfo.textContent = `${fmt.bytes(d.disk.used)} / ${fmt.bytes(d.disk.total)}`;
+
+    // ---- 图表 ----
     charts.cpu.push(d.cpu.percent || 0);
     charts.mem.push(d.memory.percent || 0);
     charts.net.push((down + up) / 1024);
     if (charts.net.maxValue < 100) charts.net.maxValue = 100;
 
+    // ---- 任务表 ----
     const tasks = d.tasks || [];
     taskBody.innerHTML = '';
     if (!tasks.length) {

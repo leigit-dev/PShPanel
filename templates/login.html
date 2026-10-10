@@ -16,13 +16,9 @@
     <input type="password" id="password" placeholder="密码" autofocus autocomplete="current-password">
     {% if is_first %}
     <input type="password" id="password2" placeholder="确认密码" autocomplete="new-password">
-    <div class="password-hint" id="pwd-hint">
-      至少 8 位，包含大小写字母 / 数字 / 符号中的任意两类
-    </div>
+    <div class="password-hint">至少 8 位，包含大小写字母 / 数字 / 符号中的任意两类</div>
     {% endif %}
-    <button type="submit" id="submitBtn">
-      {% if is_first %}创建{% else %}进入{% endif %}
-    </button>
+    <button type="submit" id="submitBtn">{% if is_first %}创建{% else %}进入{% endif %}</button>
     <div class="error" id="error"></div>
     <div class="lockout" id="lockout" hidden></div>
   </div>
@@ -36,21 +32,21 @@ const lockoutEl = document.getElementById('lockout');
 let lockoutTimer = null;
 
 function showLockout(seconds) {
-  lockoutEl.hidden = false;
-  btn.disabled = true;
+  lockoutEl.hidden = false; btn.disabled = true;
   let remain = seconds;
   const render = () => {
-    lockoutEl.textContent = `账号已锁定，请等待 ${remain} 秒`;
-    if (remain <= 0) {
-      clearInterval(lockoutTimer);
-      lockoutEl.hidden = true;
-      btn.disabled = false;
-      return;
-    }
+    lockoutEl.textContent = '账号已锁定，请等待 ' + remain + ' 秒';
+    if (remain <= 0) { clearInterval(lockoutTimer); lockoutEl.hidden = true; btn.disabled = false; return; }
     remain--;
   };
   render();
   lockoutTimer = setInterval(render, 1000);
+}
+
+function checkAccessRedirect(r) {
+  if (!r) return false;
+  if (r.type === 'opaqueredirect' || r.type === 'error') return true;
+  return r.status === 0;
 }
 
 async function checkLockout() {
@@ -59,14 +55,6 @@ async function checkLockout() {
     const d = await r.json();
     if (d.locked && d.unlock_in > 0) showLockout(d.unlock_in);
   } catch (e) {}
-}
-
-// 检测 Access 拦截：返回 0 或 opaqueredirect
-function isAccessBlocked(r) {
-  if (!r) return false;
-  if (r.type === 'opaqueredirect' || r.type === 'error') return true;
-  if (r.status === 0) return true;
-  return false;
 }
 
 async function submit() {
@@ -79,29 +67,23 @@ async function submit() {
   btn.disabled = true;
   try {
     const r = await fetch('/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({password}),
-      credentials: 'same-origin',
-      redirect: 'manual',
+      credentials: 'same-origin', redirect: 'manual',
     });
-
-    if (isAccessBlocked(r)) {
-      err.textContent = '网关会话已过期，正在刷新页面…';
-      setTimeout(() => location.reload(), 1500);
-      return;
+    if (checkAccessRedirect(r)) {
+      err.textContent = '网关会话已过期，正在刷新…';
+      setTimeout(() => location.reload(), 1500); return;
     }
-
     const data = await r.json().catch(() => ({}));
     if (data.ok) { location.href = '/'; return; }
     if (r.status === 429) {
       const m = (data.error || '').match(/(\d+)/);
-      showLockout(m ? parseInt(m[1]) : 60);
-      return;
+      showLockout(m ? parseInt(m[1]) : 60); return;
     }
     err.textContent = data.error || '登录失败';
   } catch (e) {
-    err.textContent = '网关会话已过期，正在刷新页面…';
+    err.textContent = '网关会话已过期，正在刷新…';
     setTimeout(() => location.reload(), 1500);
   } finally {
     if (lockoutEl.hidden) btn.disabled = false;
@@ -109,8 +91,7 @@ async function submit() {
 }
 
 document.getElementById('login-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  submit();
+  e.preventDefault(); submit();
 });
 pwd.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
@@ -123,7 +104,6 @@ const p2 = document.getElementById('password2');
 if (p2) p2.addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); submit(); }
 });
-
 checkLockout();
 </script>
 </body>
